@@ -1,1 +1,1 @@
-# TiDHy
+# TiDHy: Timescale demixing via Hypernetworks
