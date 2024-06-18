@@ -1,0 +1,54 @@
+name: AnymalTerrain
+
+nenvs: 50
+
+defaults:
+  - model: default_model
+  - _self_
+
+model:
+  ##### Gradient norm params #####
+  grad_norm: true
+  grad_norm_inf: false
+  grad_alpha: .5
+  grad_alpha_inf: 1
+  ##### Regularization params #####
+  Lnuc_alpha: ${resolve_default:0,${...Lnuc_alpha}}
+  L0_alpha: ${resolve_default:0,${...L0_alpha}}
+  L1_alpha: ${resolve_default:0,${...L1_alpha}}
+  L1_alpha_spat: ${resolve_default:0,${...L1_alpha_spat}}
+  L1_alpha_inf: ${resolve_default:0,${...L1_alpha_inf}}
+  L1_alpha_W: ${resolve_default:0,${...L1_alpha_W}}
+  L1_alpha_r2: 0
+  L1_inf_w: 0
+  L1_inf_r: 0
+  L1_inf_r2: 0
+  lmda_r: 0
+  lmda_r2: 0
+  cos_eta: 5
+  clip_grad: 500
+  weight_decay: 0.00001
+
+train:
+  version: ${resolve_default:0,${...version}}
+  num_epochs: 1000
+  sequence_length: 500
+  overlap_factor: 2
+  stack_inputs: true
+  num_workers: 6
+  save_summary_steps: 5
+  show_progress: true
+  show_inf_progress: false
+  single_ani: false
+  train_size: 1000
+  test_size: 50
+  gpu: 0
+  normalize_obs: false
+  batch_size_input: false
+  batch_size: 16384
+
+delay:
+  delay_embed: false
+  delay_tau: 500
+  delay_pcs: true
+  skipt: 15

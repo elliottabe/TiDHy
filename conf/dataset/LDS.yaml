@@ -1,0 +1,67 @@
+name: LDS
+
+defaults:
+  - model: default_model
+  - _self_
+
+model:
+  ##### Gradient norm params #####
+  grad_norm: true
+  grad_norm_inf: false
+  grad_alpha: .5
+  grad_alpha_inf: 1
+  ##### Regularization params #####
+  Lnuc_alpha: ${resolve_default:0,${...Lnuc_alpha}}
+  L0_alpha: ${resolve_default:0,${...L0_alpha}}
+  L1_alpha: ${resolve_default:0,${...L1_alpha}}
+  L1_alpha_spat: ${resolve_default:0,${...L1_alpha_spat}}
+  L1_alpha_inf: ${resolve_default:0,${...L1_alpha_inf}}
+  L1_alpha_W: ${resolve_default:0,${...L1_alpha_W}}
+  L1_alpha_r2: 0
+  L1_inf_r2: 0
+  L1_inf_w: 0
+  L1_inf_r: 0
+  lmda_r: 0
+  lmda_r2: 0
+  cos_eta: 5
+  clip_grad: 500
+  weight_decay: 0.00001
+
+ssm_params:
+  Nlds: 3
+  n_disc_states: 2
+  latent_dim: 2
+  obs_dim: 3
+  random_projection: true
+  rand_dim: 20
+  partial_sup: true
+  partial_obs: false
+  full_sup: false
+  overlap: 2
+  normalize: true
+  seed: 10
+  time_bins_train: 200000
+  time_bins_test: 50000
+  timescales: [.1,1,10,100,1000,.5]
+  z_timescale: [.975,.975,.975]
+
+train:
+  version: ${resolve_default:0,${...version}}
+  num_epochs: 1000
+  sequence_length: 200
+  overlap_factor: 10
+  stack_inputs: true
+  num_workers: 6
+  save_summary_steps: 5
+  show_progress: true
+  show_inf_progress: false
+  gpu: 0
+  test: false
+  batch_size_input: true
+  batch_size: 32768
+
+delay:
+  delay_embed: false
+  delay_tau: 3
+  delay_pcs: true
+  skipt: 15

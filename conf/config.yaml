@@ -1,0 +1,52 @@
+# Dataset name - used to pick the data to load
+dataset_name: ${dataset.name}
+generate_report: false
+
+##### Easy Access Variables #####
+# if set to positive integer, overrides the default
+r2_dim: ''
+r_dim: ''
+mix_dim: ''
+Lnuc_alpha: ''
+L0_alpha: ''
+L1_alpha: ''
+L1_alpha_spat: ''
+L1_alpha_inf: ''
+L1_alpha_W: ''
+Orth_alpha_spat: ''
+version: ''
+
+model: ${dataset.model}
+
+train: ${dataset.train}
+
+delay: ${dataset.delay}
+
+checkpoint: ''
+
+# set default task and default training config based on dataset
+defaults:
+  - _self_
+  - dataset: SLDS
+  - paths: glados
+  # - override hydra/launcher: joblib
+  # - hydra/job_logging: disabled
+# - train: ${dataset}
+
+
+# set the directory where the output files get saved
+hydra:
+  job:
+      config:
+        override_dirname:
+          exclude_keys:
+            - paths
+            - version
+            - dataset
+            - dataset.train.gpu
+            - checkpoint
+  run:
+    dir: ${paths.base_dir}/${hydra:job.override_dirname}
+  sweep:
+    dir: ${paths.base_dir}
+    subdir: ${hydra.job.override_dirname}

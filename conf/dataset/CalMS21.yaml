@@ -1,0 +1,50 @@
+name: CalMS21
+
+defaults:
+  - model: default_model
+  - _self_
+
+model:
+  ##### Gradient norm params #####
+  grad_norm: true
+  grad_norm_inf: false
+  grad_alpha: .5
+  grad_alpha_inf: 1
+  ##### Regularization params #####
+  L0_alpha: ${resolve_default:0,${...L0_alpha}}
+  L1_alpha: ${resolve_default:0,${...L1_alpha}}
+  L1_alpha_spat: ${resolve_default:0,${...L1_alpha_spat}}
+  L1_alpha_inf: ${resolve_default:0,${...L1_alpha_inf}}
+  L1_alpha_r2: 0
+  L1_inf_w: 0
+  L0_inf_r2: 0
+  lmda_r: 0
+  lmda_r2: 0
+  cos_eta: 5
+  clip_grad: 500
+  weight_decay: 0.00001
+
+train:
+  version: ${resolve_default:0,${...version}}
+  num_epochs: 1000
+  sequence_length: 500
+  overlap_factor: 5
+  stack_inputs: true
+  num_workers: 6
+  save_summary_steps: 5
+  show_progress: true
+  show_inf_progress: false
+  gpu: 0
+  test: false
+  batch_size_input: true
+  batch_size: 32768
+  normalize: true
+  add_basic_features: true
+  only_basic_features: false
+
+delay:
+  delay_embed: false
+  delay_tau: 3
+  delay_pcs: False
+  orig_input_size: []
+  skipt: 15

@@ -1,0 +1,11 @@
+user: eabe
+
+# set the directory where the output files get saved
+save_dir: /home/${paths.user}/Research/data/hypernets/${dataset.name}/DPC_${dataset.name}/${train.version}
+log_dir:  ${paths.save_dir}/${hydra:sweep.subdir}/
+tb_dir:   ${paths.save_dir}/${hydra:sweep.subdir}/tb/
+ckpt_dir: ${paths.save_dir}/${hydra:sweep.subdir}/ckpt/
+fig_dir:  ${paths.save_dir}/${hydra:sweep.subdir}/figures/
+data_dir: /home/${paths.user}/Research/data/hypernets/${dataset.name}/datasets/
+
+# run_mode: ${hydra:mode}

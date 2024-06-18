@@ -1,0 +1,19 @@
+name: TiDHy
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python >=3.10,<3.11
+  - defaults::scipy
+  - defaults::numpy
+  - defaults::pandas
+  - defaults::matplotlib
+  - defaults::ipykernel
+  - defaults::tqdm
+  - defaults::h5py
+  - defaults::pytables
+  - defaults::seaborn
+  - defaults::ipywidgets
+  - defaults::jupyter
+  - defaults::jupyterlab
+  - pip
