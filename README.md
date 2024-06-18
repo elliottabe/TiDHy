@@ -18,5 +18,10 @@ https://pytorch.org/get-started/locally/
 To install TiDHy, in the repo folder use:  
 `pip install -e .`
 
-For SLDS comparison install ssm package: 
+For SLDS comparison install ssm package:  
 https://github.com/lindermanlab/ssm
+
+
+## Example Code
+To Train TiDHy you can run the Run_TiDHy.py script from terminal with hydra overrides:  
+`python Run_TiDHy.py un_TiDHy.py dataset=SLDS dataset.train.gpu=0 version=Example`

@@ -1,6 +1,5 @@
 # Dataset name - used to pick the data to load
 dataset_name: ${dataset.name}
-generate_report: false
 
 ##### Easy Access Variables #####
 # if set to positive integer, overrides the default

@@ -245,7 +245,7 @@ def create_dyn_mat(desired_eigenvalues):
 def partial_superposition_LDS(cfg, ssm_params, timescales=None, normalize=True, random_projection=True, partial_sup=True, partial_obs=False, full_sup=False, seed=0, saved_evals=True,**kwargs):
     """Generate data from a linear dynamical system (LDS) with partial superposition."""
     ##### Fast to slow #####
-    timescales = [-.025,-.25,-.1,-.5,-.01,-.75]
+    timescales = [-.025,-.25,-.1,-.5,-.015,-.75]
     freq = np.zeros(len(timescales)).astype(complex)
     freq.imag = [.0075,.05,.025,.075,.01,.075]
     set_eigvalues = np.array([[np.exp(timescales) + 2*np.pi*np.array(freq)],[np.exp(timescales) - 2*np.pi*np.array(freq)]]).squeeze().T

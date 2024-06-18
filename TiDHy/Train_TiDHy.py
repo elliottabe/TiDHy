@@ -102,10 +102,7 @@ def train(model, optimizer, dataloader, params, device):
             with torch.no_grad():
                 close_to_zero = torch.abs(model.temporal)<1e-4
                 model.temporal[close_to_zero] = 0
-        # if 'L1_alpha_spat' in params and params['L1_alpha_spat'] is not None and params['L1_alpha_spat'] !='' and params['L1_alpha_spat'] != 0:
-        #     with torch.no_grad():
-        #         close_to_zero = torch.abs(model.spatial_decoder[0].weight)<1e-4
-        #         model.spatial_decoder[0].weight[close_to_zero] = 0
+
         # normalize
         if (params.normalize_temporal) | (params.normalize_spatial):
             model.normalize()
@@ -158,7 +155,6 @@ def grad_norm(model,params,loss,optimizer):
         model_parameters.append(model.temporal)
     if 'L1_alpha' in params and params['L1_alpha'] is not None and params['L1_alpha'] !=''  and params['L1_alpha'] != 0:
         model_parameters.append(model.temporal)
-        # model_parameters.append(model.hypernet[-2].weight)
     if 'L1_alpha_spat' in params and params['L1_alpha_spat'] is not None and params['L1_alpha_spat'] !='' and params['L1_alpha_spat'] != 0:
         model_parameters.append([p for name,p in model.spatial_decoder.named_parameters()])
     if params.use_r2_decoder:
@@ -191,9 +187,6 @@ def grad_norm(model,params,loss,optimizer):
     # update model weights and loss weights
     for opt in optimizer: opt.step()
     # renormalize weights
-    # if torch.any(weights < 0):
-    #     weights = F.relu(weights) + 1e-6
-        # weights = F.elu(weights)+1
     weights = torch.exp(weights)
     weights = (weights / weights.sum() * T).detach()
     model.loss_weights = weights.detach()

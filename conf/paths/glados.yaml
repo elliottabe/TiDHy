@@ -1,7 +1,7 @@
 user: eabe
 
 # set the directory where the output files get saved
-base_dir: /data/users/${paths.user}/hypernets/${dataset.name}/DPC_${dataset.name}/${train.version}
+base_dir: /data/users/${paths.user}/hypernets/${dataset.name}/TiDHy_${dataset.name}/${train.version}
 save_dir: ${paths.base_dir}/${hydra:job.override_dirname}
 log_dir:  ${paths.save_dir}/
 tb_dir:   ${paths.save_dir}/tb/

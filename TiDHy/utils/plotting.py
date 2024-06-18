@@ -686,51 +686,6 @@ def plot_figures_real(model,result_dict,cfg,save_figs=True,t=0,dt=None,reduce_pl
     nfig,fig,axs = plot_R2_hat(nfig,result_dict,cfg,save_figs=save_figs,t=t,dt=dt)
 
 
-def generate_report(Wiki_Path,Wiki_FigPath,cfg,version):
-    from mdutils.mdutils import MdUtils
-    from datetime import datetime
-
-    #### getting the current date and time #####
-    current_datetime = datetime.now()
-    current_date = current_datetime.strftime("%m%d%Y")
-    dataset_type = cfg.dataset.name
-    filename = Wiki_Path / 'BruntonLab_Wiki/HyperNets_Behavior'/ '{}'.format(dataset_type) / '{}_{}_{}_{}.md'.format(current_date,version,cfg.dataset.name,cfg.dataset.loss_type)
-    
-    ##### Create Markdown File #####
-    mdFile = MdUtils(file_name=filename.as_posix())
-
-    ##### Add Summary #####
-    mdFile.new_header(level=1, title='Summary')
-    mdFile.new_line("This text will be edited later to include a summary of the setup and results.")
-
-    ##### Add parameters #####
-    mdFile.new_header(level=1, title='Parameters')
-    mdFile.new_line("<br/> \n <details> \n <summary>SSM  Parameters</summary>")
-    ssm_string = "{" + "\n".join("{!r}: {!r},".format(k, v) for k, v in cfg.dataset['ssm_params'].items()) + "}"
-    mdFile.insert_code('ssm_params='+ ssm_string , language='python')
-    mdFile.new_line("</details> ")
-
-    mdFile.new_line("<br/> \n <details> \n <summary>DPC Network Parameters</summary>")
-    params_string = "{" + "\n".join("{!r}: {!r},".format(k, v) for k, v in cfg.dataset.items()) + "}"
-    mdFile.insert_code('params='+ params_string , language='python')
-    mdFile.new_line("</details> ")
-
-    mdFile.new_line('')
-    mdFile.new_line(mdFile.new_inline_image(text='DPC_Schematic', path='/.attachments/Schematics/DPC.png =300x'))
-    mdFile.new_line('')
-
-    ##### Add Results #####
-    mdFile.new_header(level=1, title='Plots')
-
-    FigList = sorted(list(Wiki_FigPath.glob('*.png')))
-    for n in range(len(FigList)):
-        mdFile.new_line('')
-        mdFile.new_line(mdFile.new_inline_image(text='{}'.format(FigList[n].name),path='/'+((FigList[n].relative_to(Wiki_Path)).as_posix())))
-        mdFile.new_line('')
-        
-    mdFile.create_md_file()
-
-
 
 def plot_r2_loss(r2):
     fig = plt.figure()

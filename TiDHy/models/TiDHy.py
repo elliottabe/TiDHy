@@ -2,7 +2,7 @@ import logging
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
-from torch.optim.lr_scheduler import ReduceLROnPlateau, MultiStepLR
+from torch.optim.lr_scheduler import MultiStepLR
 from TiDHy.utils.utils import requires_grad
 from tqdm.auto import tqdm
 
@@ -40,6 +40,7 @@ class TiDHy(nn.Module):
     def __init__(self, params, device, show_progress=True,show_inf_progress=False):
         super(TiDHy, self).__init__()
         self.__dict__.update(params)
+        
         # spatial: p(I | r)
         ##### Potential to use Binary Cross Entropy Loss  #####
         if params.loss_type == 'BCE':
@@ -97,7 +98,7 @@ class TiDHy(nn.Module):
                 if p.dim() > 1:
                     nn.init.xavier_normal_(p)
         
-        self.loss_weights = None #nn.Parameter(torch.ones((2,1), requires_grad=True))
+        self.loss_weights = None 
         self.loss_weights_inf = None
 
         ##### Define Loss #####
@@ -179,15 +180,15 @@ class TiDHy(nn.Module):
             r, r2, r2_loss = self.inf(X[:, t], r_p, r2.detach().clone())
             # learning
             x_hat = self.spatial_decoder(r)
-            r_hat, _, _ = self.temporal_prediction(r_p, r2) 
-            x_bar = self.spatial_decoder(r_hat) # Try using both x_hat and x_bar to learn spatial decoder
+            r_bar, _, _ = self.temporal_prediction(r_p, r2) 
+            x_bar = self.spatial_decoder(r_bar) 
             # loss
             if self.use_r2_decoder:
                 r2_hat = self.R2_Decoder(torch.cat([r_p,r2_p],dim=-1))
                 r2_losses += torch.pow(r2 - r2_hat, 2).view(batch_size, -1).sum(1).mean(0)
-            spatial_loss += self.spat_weight*self.spat_loss(x_hat, X[:, t]).view(batch_size, -1).sum(1).mean(0)
-            spatial_loss += (1-self.spat_weight)*self.spat_loss(x_bar, X[:, t]).view(batch_size, -1).sum(1).mean(0)
-            temp_loss += torch.pow(r - r_hat,2).view(batch_size, -1).sum(1).mean(0) 
+            spatial_loss += self.spat_weight*self.spat_loss(x_hat, X[:, t]).view(batch_size, -1).sum(1).mean(0) ##### Spatial Loss due to x_hat #####
+            spatial_loss += (1-self.spat_weight)*self.spat_loss(x_bar, X[:, t]).view(batch_size, -1).sum(1).mean(0) ###### Spatial Loss due to x_bar #####
+            temp_loss += torch.pow(r - r_bar,2).view(batch_size, -1).sum(1).mean(0)  
             
             if self.show_progress:
                 logging.info('tstep:{}, '.format(t) + self.log_msg)
@@ -195,7 +196,7 @@ class TiDHy(nn.Module):
             self.r2_state = r2.detach().clone()
             self.r_state = r.detach().clone()
         ##### Clear memory #####
-        torch.cuda.memory_allocated()
+        torch.cuda.empty_cache()
         return spatial_loss, self.temp_weight * temp_loss, r2_losses, r_first, r2.detach().clone()
 
     def inf(self, x, r_p, r2):
@@ -205,15 +206,12 @@ class TiDHy(nn.Module):
         r, _ = self.init_code_(batch_size)
         r2.requires_grad = True
         # fit r
-        # optim_r = torch.optim.AdamW([r], self.lr_r)
         optim_r = torch.optim.SGD([r], self.lr_r, nesterov=True, momentum=0.9)
         optim_r2 = torch.optim.SGD([r2], self.lr_r2, nesterov=True, momentum=0.9)
         optimizers = [optim_r, optim_r2]
         milestones_r = [block for i, block in enumerate(range(self.max_iter//10,self.max_iter,self.max_iter//10))]
         milestones_r2 = [block for i, block in enumerate(range(self.max_iter//5,self.max_iter,self.max_iter//10))]
         scheduler = [MultiStepLR(optim_r, milestones=milestones_r, gamma=.5)] 
-                    # MultiStepLR(optim_r2, milestones=milestones_r2, gamma=.5)]
-                    # ReduceLROnPlateau(opt, 'min', patience=100, min_lr=.00001, factor=self.learning_rate_gamma) for opt in [optim_r]]
         converged = False
         i = 0
         r2_loss= []
@@ -411,14 +409,14 @@ class TiDHy(nn.Module):
         T = data_batch.size(1)
         input_dim = data_batch.size(2)
         # saving values
-        I_bar = torch.zeros((batch_size, T, input_dim))             # Image prediction from hypernet
-        I_hat = torch.zeros((batch_size, T, input_dim))             # Image correction (turned off after turnoff)
-        I = torch.zeros((batch_size, T, input_dim))                 # True input
-        R_bar = torch.zeros((batch_size, T, self.r_dim))           # prediction from hypernet
-        R_hat = torch.zeros((batch_size, T, self.r_dim))           # ISTA correction (turned off after turnoff)
-        R2_hat = torch.zeros((batch_size, T, self.r2_dim))         # Embedding (same after turnoff)
-        W = torch.zeros((batch_size, T, self.mix_dim))             # Mixture weights
-        temp_loss = torch.zeros((batch_size, T, self.r_dim))        # Temporal dynamics loss
+        I_bar = torch.zeros((batch_size, T, input_dim))                # Input prediction from Dynamics
+        I_hat = torch.zeros((batch_size, T, input_dim))                # Input prediction from Inference
+        I = torch.zeros((batch_size, T, input_dim))                    # True input
+        R_bar = torch.zeros((batch_size, T, self.r_dim))               # Latent prediction from dynamics 
+        R_hat = torch.zeros((batch_size, T, self.r_dim))               # Latent prediction from Inference
+        R2_hat = torch.zeros((batch_size, T, self.r2_dim))             # Higher order latent prediction from Inference
+        W = torch.zeros((batch_size, T, self.mix_dim))                 # Mixture weights
+        temp_loss = torch.zeros((batch_size, T, self.r_dim))           # Temporal dynamics loss
         spatial_loss = torch.zeros((batch_size, T, self.input_dim))    # Reconstruction Loss
         if self.dyn_bias:
             b = torch.zeros((batch_size, T, self.r_dim))             # Bias
