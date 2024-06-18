@@ -1,7 +1,6 @@
 opencv-python
 ray[tune]
 scikit-learn
-test_tube
 mdutils
 hydra-core
 hydra-joblib-launcher
