@@ -42,7 +42,6 @@ ssm_params:
   seed: 10
   time_bins_train: 200000
   time_bins_test: 50000
-  timescales: [.1,1,10,100,1000,.5]
   z_timescale: [.975,.975,.975]
 
 train:

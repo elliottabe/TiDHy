@@ -271,8 +271,6 @@ def partial_superposition_LDS(cfg, ssm_params, timescales=None, normalize=True, 
         states_x, states_x_test, states_x_val = [], [], []
         inputs_train, inputs_test, inputs_val = [], [], []
         As,bs = [],[]
-        if timescales is None: 
-            timescales = np.hstack([.1,1,10,100,1000])
         if ~isinstance(timescales, np.ndarray):
             timescales=np.array(timescales)
         p = 0
