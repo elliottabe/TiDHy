@@ -92,7 +92,6 @@ class TiDHy(nn.Module):
                     nn.ELU(),
                     nn.Linear(params.r2_decoder_hid_dim, params.r2_decoder_hid_dim),
                     nn.Linear(params.r2_decoder_hid_dim, params.r2_dim), 
-                    nn.ReLU(),
                 )
             for p in self.R2_Decoder.parameters():
                 if p.dim() > 1:

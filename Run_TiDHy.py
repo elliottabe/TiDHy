@@ -15,7 +15,7 @@ import TiDHy.utils.io_dict_to_hdf5 as ioh5
 from TiDHy.models.TiDHy import *
 from TiDHy.utils.utils import *
 from TiDHy.Train_TiDHy import train
-from TiDHy.Evaluate_TiDHy import evaluate
+from TiDHy.Evaluate_TiDHy import evaluate, fit_SLDS
 from TiDHy.datasets import *
 from TiDHy.utils.plotting import *
 
@@ -30,7 +30,7 @@ def parse_hydra_config(cfg : DictConfig):
     ##### Set Random Seed #####
     set_seed(42)
 
-    # ##### Create Tensorboard writer #####   
+    ##### Create Tensorboard writer #####   
     train_writer = SummaryWriter(log_dir=cfg.paths.tb_dir / 'train')
     val_writer = SummaryWriter(log_dir=cfg.paths.tb_dir / 'val')
     
@@ -44,9 +44,9 @@ def parse_hydra_config(cfg : DictConfig):
                         'spatial_norm': ['Multiline', ['spatial_norm/{}'.format(i) for i in range(cfg.model.r_dim)]],
                          }}
     train_writer.add_custom_scalars(tb_layout)
-    # ##### Load Dataset #####
+    ##### Load Dataset #####
     data_dict, cfg = load_dataset(cfg)
-    # ##### Convert to float tensors #####
+    ##### Convert to float tensors #####
     train_inputs = torch.tensor(data_dict['inputs_train']).float()
     val_inputs = torch.tensor(data_dict['inputs_val']).float()
 
@@ -73,7 +73,7 @@ def parse_hydra_config(cfg : DictConfig):
     dataloader_val = torch.utils.data.DataLoader(val_dataset,batch_size=batch_size_val,shuffle=False,pin_memory=True,drop_last=True)
     device = torch.device("cuda:{}".format(cfg.train['gpu']) if torch.cuda.is_available() else "cpu")
 
-# Define the model and optimizer
+    ###### Define the model and optimizer #####
     model = TiDHy(cfg.model, device, show_progress=cfg.train.show_progress, show_inf_progress=cfg.train.show_inf_progress).to(device)
     params_list = []
     params_list.append({'params': list(model.spatial_decoder.parameters()),  'lr': cfg.model.learning_rate_s,'weight_decay': cfg.model.weight_decay})
@@ -113,6 +113,7 @@ def parse_hydra_config(cfg : DictConfig):
     with tqdm(initial=start_epoch,total=cfg.train.num_epochs+1, dynamic_ncols=True) as t:
         for epoch in range(cfg.train.num_epochs+1):
             train_metrics, r2_losses_train, _, optimizer = train(model, optimizer, dataloader_train, cfg.model, device)
+            
             train_loss = train_metrics['spatial_loss'] + train_metrics['temp_loss']
             loss_tr.append(train_loss)
             ##### Write to Tensorboard #####
@@ -146,7 +147,7 @@ def parse_hydra_config(cfg : DictConfig):
             train_writer.add_figure("Dynamics", fig, epoch)
 
             # adjust learning rate
-            scheduler[0].step()
+            for n,sch in enumerate(scheduler): sch.step()
             
             if epoch % cfg.train.save_summary_steps == 0:
                 val_metrics, loss_avg, result_dict = evaluate(model, dataloader_val, cfg.model, device)
@@ -171,10 +172,9 @@ def parse_hydra_config(cfg : DictConfig):
                 for key in result_dict.keys():
                     result_dict[key] = result_dict[key].cpu().detach().numpy()
                 
-                if (cfg.dataset_name != 'CalMS21') & (cfg.dataset_name != 'Bowen') & (cfg.dataset_name != 'AnymalTerrain'):
-                    if (cfg.dataset_name != 'Lorenz'):
-                        result_dict['As'] = data_dict['As']
-                        result_dict['bs'] = data_dict['bs']
+                if 'LDS' in cfg.dataset_name:
+                    result_dict['As'] = data_dict['As']
+                    result_dict['bs'] = data_dict['bs']
                     result_dict['states_x_val'] = data_dict['states_x_val']
 
                 nfig,fig,axs = plot_inputs(nfig,result_dict,cfg,figsize=(10,6))
@@ -252,6 +252,9 @@ def parse_hydra_config(cfg : DictConfig):
             result_dict[key] = [result_dict[key][key2] for key2 in result_dict[key].keys()]
     ##### Save Results #####
     ioh5.save(cfg.paths.log_dir/'results.h5',result_dict)
+    
+    if (cfg.dataset_name == 'SLDS'):
+        fit_SLDS(cfg,data_dict)
     
 if __name__ == "__main__":
     parse_hydra_config()
