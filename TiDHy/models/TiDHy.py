@@ -164,7 +164,8 @@ class TiDHy(nn.Module):
         #     r, _ = self.init_code_(batch_size)
         #     r2 = self.r2_state.detach().clone()
         r_first = r.detach().clone()
-        spatial_loss = self.spat_loss(self.spatial_decoder(r), X[:, 0]).view(batch_size, -1).sum(1).mean(0)
+        spatial_loss_rhat = self.spat_loss(self.spatial_decoder(r), X[:, 0]).view(batch_size, -1).sum(1).mean(0)
+        spatial_loss_rbar = torch.zeros_like(spatial_loss_rhat)
         temp_loss = 0
         r2_losses = 0
         if (self.show_progress):
@@ -185,8 +186,8 @@ class TiDHy(nn.Module):
             if self.use_r2_decoder:
                 r2_hat = self.R2_Decoder(torch.cat([r_p,r2_p],dim=-1))
                 r2_losses += torch.pow(r2 - r2_hat, 2).view(batch_size, -1).sum(1).mean(0)
-            spatial_loss += self.spat_weight*self.spat_loss(x_hat, X[:, t]).view(batch_size, -1).sum(1).mean(0) ##### Spatial Loss due to x_hat #####
-            spatial_loss += (1-self.spat_weight)*self.spat_loss(x_bar, X[:, t]).view(batch_size, -1).sum(1).mean(0) ###### Spatial Loss due to x_bar #####
+            spatial_loss_rhat += self.spat_weight*self.spat_loss(x_hat, X[:, t]).view(batch_size, -1).sum(1).mean(0) ##### Spatial Loss due to x_hat #####
+            spatial_loss_rbar += (1-self.spat_weight)*self.spat_loss(x_bar, X[:, t]).view(batch_size, -1).sum(1).mean(0) ###### Spatial Loss due to x_bar #####
             temp_loss += torch.pow(r - r_bar,2).view(batch_size, -1).sum(1).mean(0)  
             
             if self.show_progress:
@@ -196,7 +197,7 @@ class TiDHy(nn.Module):
             self.r_state = r.detach().clone()
         ##### Clear memory #####
         torch.cuda.empty_cache()
-        return spatial_loss, self.temp_weight * temp_loss, r2_losses, r_first, r2.detach().clone()
+        return spatial_loss_rhat, spatial_loss_rbar, self.temp_weight * temp_loss, r2_losses, r_first, r2.detach().clone()
 
     def inf(self, x, r_p, r2):
         """Inference step: p(r_t, r2_t | x_t, r_t-1, r2_t-1)"""
@@ -416,7 +417,8 @@ class TiDHy(nn.Module):
         R2_hat = torch.zeros((batch_size, T, self.r2_dim))             # Higher order latent prediction from Inference
         W = torch.zeros((batch_size, T, self.mix_dim))                 # Mixture weights
         temp_loss = torch.zeros((batch_size, T, self.r_dim))           # Temporal dynamics loss
-        spatial_loss = torch.zeros((batch_size, T, self.input_dim))    # Reconstruction Loss
+        spatial_loss_rhat = torch.zeros((batch_size, T, self.input_dim))    # Reconstruction Loss
+        spatial_loss_rbar = torch.zeros((batch_size, T, self.input_dim))    # Reconstruction Loss
         if self.dyn_bias:
             b = torch.zeros((batch_size, T, self.r_dim))             # Bias
         Ut = torch.zeros((batch_size, T, self.r_dim, self.r_dim)) # Temporal prediction matrices
@@ -425,13 +427,14 @@ class TiDHy(nn.Module):
         R_bar[:, 0] = r.detach().clone().cpu()
         R2_hat[:, 0] = r2.detach().clone().cpu()
         I_bar[:, 0] = self.spatial_decoder(r).detach().clone().cpu()
+        spatial_loss_rbar[:,0] = self.spat_loss(self.spatial_decoder(r), data_batch[:, 0])
         # p(r_1 | I_1)
         r = self.inf_first_step(data_batch[:, 0])
         R_hat[:, 0] = r.detach().clone().cpu()
         I_hat[:, 0] = self.spatial_decoder(r).detach().clone().cpu()
         I[:, 0] = data_batch[:, 0]
         r_first = r.detach().clone()
-        spatial_loss[:,0] = self.spat_loss(self.spatial_decoder(r), data_batch[:, 0])
+        spatial_loss_rhat[:,0] = self.spat_loss(self.spatial_decoder(r), data_batch[:, 0])
 
         for t in tqdm(range(1, T), leave=False):
             r2_p = r2.detach().clone()
@@ -446,7 +449,8 @@ class TiDHy(nn.Module):
             # inference
             r, r2, _ = self.inf(data_batch[:, t], r_p, r2.detach().clone())
             R_hat[:, t] = r.detach().clone().cpu()
-            I_hat[:, t] = self.spatial_decoder(r).detach().clone().cpu()
+            x_hat = self.spatial_decoder(r)
+            I_hat[:, t] = x_hat.detach().clone().cpu()
             I[:, t] = data_batch[:, t]
             R2_hat[:, t]= r2.detach().clone().cpu()
             wb = self.hypernet(r2)
@@ -456,7 +460,8 @@ class TiDHy(nn.Module):
             Ut[:, t] = V_t.detach().clone().cpu()
 
             # loss
-            spatial_loss[:,t,:] = self.spat_loss(x_bar, data_batch[:, t])
+            spatial_loss_rhat[:,t,:] = self.spat_loss(x_hat, data_batch[:, t])
+            spatial_loss_rbar[:,t,:] = self.spat_loss(x_bar, data_batch[:, t])
             temp_loss[:,t,:] = torch.pow(r - r_bar,2)
 
         # result dict
@@ -470,9 +475,12 @@ class TiDHy(nn.Module):
         result_dict['W'] = W
         result_dict['Ut'] = Ut
         result_dict['temp_loss'] = temp_loss
-        result_dict['spatial_loss'] = spatial_loss
+        result_dict['spatial_loss_rhat'] = spatial_loss_rhat
+        result_dict['spatial_loss_rbar'] = spatial_loss_rbar
         if self.dyn_bias:
             result_dict['b'] = b
-        
-        return spatial_loss.reshape(batch_size,-1).sum(1).mean(0), self.temp_weight * temp_loss.reshape(batch_size,-1).sum(1).mean(0), result_dict
+            
+        spatial_loss_rhat_avg = spatial_loss_rhat.reshape(batch_size,-1).sum(1).mean(0)
+        spatial_loss_rbar_avg = spatial_loss_rbar.reshape(batch_size,-1).sum(1).mean(0)
+        return spatial_loss_rhat_avg, spatial_loss_rbar_avg, self.temp_weight * temp_loss.reshape(batch_size,-1).sum(1).mean(0), result_dict
     

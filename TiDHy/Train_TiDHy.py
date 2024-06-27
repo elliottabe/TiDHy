@@ -30,10 +30,11 @@ def train(model, optimizer, dataloader, params, device):
         else: 
             train_batch = train_batch[0]
         ##### Forward pass #####
-        spatial_loss, temp_loss, r2_loss, _, _ = model(train_batch)
+        spatial_loss_rhat, spatial_loss_rbar, temp_loss, r2_loss, _, _ = model(train_batch)
         # compute loss
         loss_dict = {
-            "spatial_loss": spatial_loss.item(),
+            "spatial_loss_rhat": spatial_loss_rhat.item(),
+            "spatial_loss_rbar": spatial_loss_rbar.item(),
             "temp_loss": temp_loss.item(),
         }
         # clear previous gradients, compute gradients of all variables wrt loss
@@ -54,7 +55,7 @@ def train(model, optimizer, dataloader, params, device):
             Orth_spat = torch.pow((model.spatial_decoder[0].weight.T @ model.spatial_decoder[0].weight) - (torch.eye(model.spatial_decoder[0].weight.shape[1],device=model.spatial_decoder[0].weight.device)),2).mean()
         ##### GradNorm #####
         if (params.grad_norm):
-            losses = [spatial_loss,temp_loss+params.cos_eta*cos_reg]
+            losses = [spatial_loss_rhat, spatial_loss_rbar, temp_loss+params.cos_eta*cos_reg]
             if 'Lnuc_alpha' in params and params['Lnuc_alpha'] is not None and params['Lnuc_alpha'] !=''  and params['Lnuc_alpha'] != 0:
                 for n in range(len(losses)):
                     losses[n] += params.Lnuc_alpha*Lnuc_sparcity_reg 
@@ -75,7 +76,7 @@ def train(model, optimizer, dataloader, params, device):
             ####### Take Gradient Step ######
             weights, loss, optimizer = grad_norm(model,params,torch.stack(losses),optimizer)
         else:
-            loss = spatial_loss + temp_loss + params.cos_eta*cos_reg 
+            loss = spatial_loss_rhat + spatial_loss_rbar + temp_loss + params.cos_eta*cos_reg 
             if 'Lnuc_alpha' in params and params['Lnuc_alpha'] is not None and params['Lnuc_alpha'] !=''  and params['Lnuc_alpha'] != 0:
                 loss += params.Lnuc_alpha*Lnuc_sparcity_reg 
             if 'L0_alpha' in params and params['L0_alpha'] is not None and params['L0_alpha'] !=''  and params['L0_alpha'] != 0:
@@ -149,6 +150,7 @@ def grad_norm(model,params,loss,optimizer):
     gw = []
     ##### Spatial, Temporal  #####
     model_parameters = [[p for name,p in model.spatial_decoder.named_parameters()],
+                        [p for name,p in model.spatial_decoder.named_parameters()],
                         [model.temporal]+[p for name,p in model.hypernet.named_parameters()],
                         ]
     if 'L0_alpha' in params and params['L0_alpha'] is not None and params['L0_alpha'] !=''  and params['L0_alpha'] != 0:

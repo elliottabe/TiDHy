@@ -14,6 +14,7 @@ L1_alpha_inf: ''
 L1_alpha_W: ''
 Orth_alpha_spat: ''
 version: ''
+seed: 42
 
 model: ${dataset.model}
 

@@ -28,13 +28,13 @@ def parse_hydra_config(cfg : DictConfig):
     set_logger(cfg,cfg.paths.log_dir/'main.log')
 
     ##### Set Random Seed #####
-    set_seed(42)
+    set_seed(cfg.seed)
 
     ##### Create Tensorboard writer #####   
     train_writer = SummaryWriter(log_dir=cfg.paths.tb_dir / 'train')
     val_writer = SummaryWriter(log_dir=cfg.paths.tb_dir / 'val')
     
-    GradNorm_weights=['spatial','temporal']
+    GradNorm_weights=['spatial_rhat','spatial_rbar','temporal']
     if cfg.model['use_r2_decoder']:
         GradNorm_weights.append('r2_losses')
     tb_layout = {'Norms':{
@@ -114,11 +114,12 @@ def parse_hydra_config(cfg : DictConfig):
         for epoch in range(cfg.train.num_epochs+1):
             train_metrics, r2_losses_train, _, optimizer = train(model, optimizer, dataloader_train, cfg.model, device)
             
-            train_loss = train_metrics['spatial_loss'] + train_metrics['temp_loss']
+            train_loss = train_metrics['spatial_loss_rhat'] + train_metrics['spatial_loss_rbar'] + train_metrics['temp_loss']
             loss_tr.append(train_loss)
             ##### Write to Tensorboard #####
-            train_writer.add_scalar("Total", train_metrics['spatial_loss'] + train_metrics['temp_loss'], epoch)
-            train_writer.add_scalar("Spatial Loss", train_metrics['spatial_loss'], epoch)
+            train_writer.add_scalar("Total", train_metrics['spatial_loss_rhat'] + train_metrics['spatial_loss_rbar'] + train_metrics['temp_loss'], epoch)
+            train_writer.add_scalar("Spatial Loss rhat", train_metrics['spatial_loss_rhat'], epoch)
+            train_writer.add_scalar("Spatial Loss rbar", train_metrics['spatial_loss_rbar'], epoch)
             train_writer.add_scalar("Temporal Loss", train_metrics['temp_loss'], epoch)
             dyn_norm = torch.norm(model.temporal.grad.detach().cpu(), p=2, dim=1).numpy()
             hyper_norm = np.mean([torch.norm(param.grad,p=2).detach().cpu().numpy() for param in model.hypernet.parameters()])
@@ -152,7 +153,7 @@ def parse_hydra_config(cfg : DictConfig):
             if epoch % cfg.train.save_summary_steps == 0:
                 val_metrics, loss_avg, result_dict = evaluate(model, dataloader_val, cfg.model, device)
 
-                val_loss = val_metrics['spatial_loss'] + val_metrics['temp_loss']
+                val_loss = val_metrics['spatial_loss_rhat'] + val_metrics['spatial_loss_rbar'] + val_metrics['temp_loss']
                 loss_te.append(val_loss)
                 is_best = val_loss <= best_val_loss
                 if is_best:
@@ -199,8 +200,9 @@ def parse_hydra_config(cfg : DictConfig):
                 train_writer.add_figure("R2", fig, epoch)
 
                 ##### Write to Tensorboard #####
-                val_writer.add_scalar("Total", val_metrics['spatial_loss'] + val_metrics['temp_loss'], epoch)
-                val_writer.add_scalar("Spatial Loss", val_metrics['spatial_loss'], epoch)
+                val_writer.add_scalar("Total", val_loss, epoch)
+                val_writer.add_scalar("Spatial Loss rhat", val_metrics['spatial_loss_rhat'], epoch)
+                val_writer.add_scalar("Spatial Loss rbar", val_metrics['spatial_loss_rbar'], epoch)
                 val_writer.add_scalar("Temporal Loss", val_metrics['temp_loss'], epoch)
 
             ##### Update tqdm #####
@@ -226,7 +228,7 @@ def parse_hydra_config(cfg : DictConfig):
     dataloader_test = torch.utils.data.DataLoader(test_dataset,batch_size=batch_size_test,pin_memory=True,shuffle=False,drop_last=True)
     for Nbatch, batch in enumerate(dataloader_test):
         X = batch[0].to(device,non_blocking=True)
-        spatial_loss,temp_loss,result_dict_temp = model.evaluate_record(X)
+        spatial_loss_rhat, spatial_loss_rbar,temp_loss,result_dict_temp = model.evaluate_record(X)
         if Nbatch==0:
             result_dict = result_dict_temp
         else:
@@ -245,7 +247,8 @@ def parse_hydra_config(cfg : DictConfig):
         result_dict['states_x_test'] = data_dict['states_x_test']
     result_dict['loss_tr'] = np.array(loss_tr)
     result_dict['loss_te'] = np.array(loss_te)
-    result_dict['final_spatial_loss'] = spatial_loss.item()
+    result_dict['final_spatial_loss_rhat'] = spatial_loss_rhat.item()
+    result_dict['final_spatial_loss_rbar'] = spatial_loss_rbar.item()
     result_dict['final_temp_loss'] = temp_loss.item()
     for key in result_dict.keys():
         if isinstance(result_dict[key],dict):
