@@ -28,7 +28,7 @@ ssm_params:
 train:
   version: ${resolve_default:0,${...version}}
   num_epochs: 1000
-  sequence_length: 1000
+  sequence_length: 200
   overlap_factor: 10
   stack_inputs: true
   num_workers: 6

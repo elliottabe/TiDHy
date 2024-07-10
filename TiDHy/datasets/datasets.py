@@ -383,15 +383,15 @@ def partial_superposition_SLDS(cfg, ssm_params, timescales=None, normalize=False
     filename = 'SLDS_N{}_zD{}_xD{}_yD{}_seed{}.h5'.format(ssm_params['Nlds'],ssm_params['n_disc_states'],ssm_params['latent_dim'],ssm_params['obs_dim'],ssm_params['seed'])
     if (cfg.paths.data_dir/filename).exists():
         data_dict = ioh5.load(cfg.paths.data_dir / filename)
-        inputs_train = data_dict['inputs_train']
-        inputs_val = data_dict['inputs_val']
-        inputs_test = data_dict['inputs_test']
-        states_z = data_dict['states_z']
-        states_z_test = data_dict['states_z_test']
-        states_z_val = data_dict['states_z_val']
-        states_x = data_dict['states_x']
-        states_x_val = data_dict['states_x_val']
-        states_x_test = data_dict['states_x_test']
+        inputs_train     = data_dict['inputs_train'][:ssm_params['time_bins_train']]
+        inputs_val       = data_dict['inputs_val'][:ssm_params['time_bins_test']]
+        inputs_test      = data_dict['inputs_test'][:ssm_params['time_bins_test']]
+        states_z         = data_dict['states_z'][:ssm_params['time_bins_train']]
+        states_z_test    = data_dict['states_z_test'][:ssm_params['time_bins_test']]
+        states_z_val     = data_dict['states_z_val'][:ssm_params['time_bins_test']]
+        states_x         = data_dict['states_x'][:ssm_params['time_bins_train']]
+        states_x_val     = data_dict['states_x_val'][:ssm_params['time_bins_test']]
+        states_x_test    = data_dict['states_x_test'][:ssm_params['time_bins_test']]
         As = data_dict['As']
         bs = data_dict['bs']
         lds_dict={}

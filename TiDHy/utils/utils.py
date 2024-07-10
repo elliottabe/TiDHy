@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import torch
+import torch.nn.functional as F
 
 from omegaconf import OmegaConf
 from tqdm.auto import tqdm
@@ -52,6 +53,13 @@ def set_seed(seed, torch_deterministic=False, rank=0):
         torch.backends.cudnn.deterministic = False
 
     return seed
+
+def cos_sim_mat(x, dim=-1):
+    ''' Compute the pairwise cosine similiarty of different vectors within a matrix (i,j) where i!=j'''
+    if x.dim() == 2:
+        x = x[None,:,:]
+    cos_sim = torch.sum(torch.abs(torch.tril(F.cosine_similarity(x[..., None, :, :], x[..., :, None, :], dim=dim),diagonal=-1)))
+    return cos_sim
 
 class RunningAverage():
     """A simple class that maintains the running average of a quantity

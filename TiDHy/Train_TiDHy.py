@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from TiDHy.utils import RunningAverage 
+from TiDHy.utils import RunningAverage, cos_sim_mat
 
 def train(model, optimizer, dataloader, params, device):
     """Train the model on `num_steps` batches
@@ -40,7 +40,7 @@ def train(model, optimizer, dataloader, params, device):
         # clear previous gradients, compute gradients of all variables wrt loss
         for opt in optimizer: opt.zero_grad()
         ##### Regularization #####
-        cos_reg = 1/model.mix_dim * torch.sum(torch.abs(torch.tril(F.normalize(model.temporal,dim=-1) @ F.normalize(model.temporal,dim=-1).t(),diagonal=-1)))
+        cos_reg = 1/model.mix_dim * cos_sim_mat(model.temporal)
         if 'Lnuc_alpha' in params and params['Lnuc_alpha'] is not None and params['Lnuc_alpha'] !=''  and params['Lnuc_alpha'] != 0:
             Lnuc_sparcity_reg = torch.sum(torch.norm(model.temporal.reshape(-1,model.r_dim,model.r_dim), p='nuc',dim=(-2,-1)))
         if 'L0_alpha' in params and params['L0_alpha'] is not None and params['L0_alpha'] !=''  and params['L0_alpha'] != 0:
@@ -53,6 +53,8 @@ def train(model, optimizer, dataloader, params, device):
             sparcity_spat = torch.sum(torch.norm(model.spatial_decoder[0].weight, p=1, dim=1))
         if 'Orth_alpha_spat' in params and params['Orth_alpha_spat'] is not None and params['Orth_alpha_spat'] !='' and params['Orth_alpha_spat'] != 0:
             Orth_spat = torch.pow((model.spatial_decoder[0].weight.T @ model.spatial_decoder[0].weight) - (torch.eye(model.spatial_decoder[0].weight.shape[1],device=model.spatial_decoder[0].weight.device)),2).mean()
+        if 'Orth_alpha_r2' in params and params['Orth_alpha_r2'] is not None and params['Orth_alpha_r2'] !='' and params['Orth_alpha_r2'] != 0:
+            Orth_r2 = 1/model.r2_dim * cos_sim_mat(model.hypernet[0].weight.T)
         ##### GradNorm #####
         if (params.grad_norm):
             losses = [spatial_loss_rhat, spatial_loss_rbar, temp_loss+params.cos_eta*cos_reg]
@@ -64,13 +66,15 @@ def train(model, optimizer, dataloader, params, device):
                     losses[n] += params.L1_alpha*L0_sparcity_reg 
             if 'L1_alpha' in params and params['L1_alpha'] is not None and params['L1_alpha'] !=''  and params['L1_alpha'] != 0:
                 for n in range(len(losses)):
-                    losses[n] += params.L1_alpha*sparcity_reg 
+                    losses[n] += params.L1_alpha*sparcity_reg
             if 'L1_alpha_spat' in params and params['L1_alpha_spat'] is not None and params['L1_alpha_spat'] !='' and params['L1_alpha_spat'] != 0:
                 for n in range(len(losses)):
                     losses[n] += params.L1_alpha_spat*sparcity_spat
             if 'Orth_alpha_spat' in params and params['Orth_alpha_spat'] is not None and params['Orth_alpha_spat'] !='' and params['Orth_alpha_spat'] != 0:
                 for n in range(len(losses)):
                     losses[n] += params.Orth_alpha_spat*Orth_spat
+            if 'Orth_alpha_r2' in params and params['Orth_alpha_r2'] is not None and params['Orth_alpha_r2'] !='' and params['Orth_alpha_r2'] != 0:
+                losses[-1] += params.Orth_alpha_r2*Orth_r2
             if params.use_r2_decoder:
                 losses.append(r2_loss)
             ####### Take Gradient Step ######
@@ -89,6 +93,8 @@ def train(model, optimizer, dataloader, params, device):
                 loss += params.L1_alpha_W*sparcity_W
             if 'Orth_alpha_spat' in params and params['Orth_alpha_spat'] is not None and params['Orth_alpha_spat'] !='' and params['Orth_alpha_spat'] != 0:
                 loss += params.Orth_alpha_spat*Orth_spat
+            if 'Orth_alpha_r2' in params and params['Orth_alpha_r2'] is not None and params['Orth_alpha_r2'] !='' and params['Orth_alpha_r2'] != 0:
+                loss += params.Orth_alpha_r2*Orth_r2
             if params.use_r2_decoder:
                 losses += r2_loss
             loss.backward()
@@ -150,7 +156,7 @@ def grad_norm(model,params,loss,optimizer):
     gw = []
     ##### Spatial, Temporal  #####
     model_parameters = [[p for name,p in model.spatial_decoder.named_parameters()],
-                        [p for name,p in model.spatial_decoder.named_parameters()],
+                        [p for name,p in model.spatial_decoder.named_parameters()]+[model.temporal],
                         [model.temporal]+[p for name,p in model.hypernet.named_parameters()],
                         ]
     if 'L0_alpha' in params and params['L0_alpha'] is not None and params['L0_alpha'] !=''  and params['L0_alpha'] != 0:

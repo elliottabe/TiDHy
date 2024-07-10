@@ -98,7 +98,7 @@ def fit_SLDS(cfg,data_dict):
     # Smooth the data under the variational posterior
     q_lem_y = slds.smooth(q_lem_x, inputs_test_SLDS)
 
-    with open(cfg.paths.log_dir/f'ssm_slds_test_full_{D}D_{KeyboardInterrupt}K_{cfg.dataset.ssm_params.seed}seed.pickle', 'wb') as handle:
+    with open(cfg.paths.log_dir/f'ssm_slds_test_full_{D}D_{K}K_{cfg.dataset.ssm_params.seed}seed.pickle', 'wb') as handle:
         pickle.dump(slds, handle, protocol=pickle.HIGHEST_PROTOCOL)
         pickle.dump(posterior, handle, protocol=pickle.HIGHEST_PROTOCOL)
         pickle.dump(q_lem_x, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -137,3 +137,63 @@ def fit_SLDS(cfg,data_dict):
         pickle.dump(q_lem_x, handle, protocol=pickle.HIGHEST_PROTOCOL)
         pickle.dump(q_lem_z, handle, protocol=pickle.HIGHEST_PROTOCOL)
         pickle.dump(q_lem_y, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def run_seq_len_model(seq_len, model, data_dict, device, epoch, cfg, rerun=False):
+    '''Run the model for different sequence lengths and save the results in a dictionary'''
+    from TiDHy.utils import set_seed
+    from TiDHy.datasets import load_dataset
+    from TiDHy.utils import ioh5
+    if ((cfg.paths.log_dir/'temp_results_{}_seq.h5'.format(epoch)).exists()) & (rerun==False):
+        result_dict = ioh5.load(cfg.paths.log_dir/'temp_results_{}_seq.h5'.format(epoch))
+        return cfg, result_dict
+    else: 
+        cfg.train.sequence_length = int(np.max(seq_len))
+        data_dict, cfg = load_dataset(cfg)
+        result_dict_all = {}
+        for new_seq_len in seq_len:
+            set_seed(42)
+            test_inputs = torch.tensor(data_dict['inputs_test'].reshape(-1,new_seq_len,cfg.model.input_dim)).float()
+            test_dataset = torch.utils.data.TensorDataset(test_inputs)
+            dataloader_test = torch.utils.data.DataLoader(test_dataset,batch_size=test_inputs.shape[0],pin_memory=True,shuffle=False,drop_last=True)
+            result_dict={}
+            for Nbatch, batch in enumerate(dataloader_test):
+                X = batch[0].to(device,non_blocking=True)
+                _,_,temp_loss,result_dict_temp = model.evaluate_record(X)
+                if Nbatch==0:
+                    result_dict = result_dict_temp
+                else:
+                    for key in result_dict.keys():
+                        if isinstance(result_dict[key],torch.Tensor):
+                            result_dict[key] = torch.cat((result_dict[key],result_dict_temp[key]),dim=0)
+
+
+            for key in result_dict.keys():
+                if isinstance(result_dict[key],torch.Tensor):
+                    result_dict[key] = result_dict[key].cpu().detach().numpy()
+            if 'states_x_test' in data_dict.keys():
+                result_dict['states_x_test'] = data_dict['states_x_test']
+                result_dict['states_x_train'] = data_dict['states_x']
+            if 'As' in data_dict.keys():
+                result_dict['As'] = data_dict['As']
+                result_dict['bs'] = data_dict['bs']
+            if 'states_z_test' in data_dict.keys():
+                result_dict['states_z_test'] = data_dict['states_z_test']
+                result_dict['states_z_train'] = data_dict['states_z']
+
+            for key in result_dict.keys():
+                if isinstance(result_dict[key],dict):
+                    result_dict[key] = [result_dict[key][key2] for key2 in result_dict[key].keys()]
+                    
+                    
+            ##### Save Results #####
+            ioh5.save(cfg.paths.log_dir/'temp_results_{}_T{:04d}.h5'.format(epoch,new_seq_len),result_dict)
+            
+            reshape_list = ['W','I','I_hat','I_bar','R_hat','R_bar','R2_hat']
+            for key in reshape_list:
+                if key in result_dict.keys():
+                    result_dict[key] = result_dict[key].reshape(-1,result_dict[key].shape[-1])
+            result_dict_all['{}'.format(new_seq_len)] = result_dict
+        ioh5.save(cfg.paths.log_dir/'temp_results_{}_seq.h5'.format(epoch),result_dict_all)
+        print('Done')
+        return cfg, result_dict_all

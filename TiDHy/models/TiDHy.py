@@ -186,8 +186,8 @@ class TiDHy(nn.Module):
             if self.use_r2_decoder:
                 r2_hat = self.R2_Decoder(torch.cat([r_p,r2_p],dim=-1))
                 r2_losses += torch.pow(r2 - r2_hat, 2).view(batch_size, -1).sum(1).mean(0)
-            spatial_loss_rhat += self.spat_weight*self.spat_loss(x_hat, X[:, t]).view(batch_size, -1).sum(1).mean(0) ##### Spatial Loss due to x_hat #####
-            spatial_loss_rbar += (1-self.spat_weight)*self.spat_loss(x_bar, X[:, t]).view(batch_size, -1).sum(1).mean(0) ###### Spatial Loss due to x_bar #####
+            spatial_loss_rhat += self.spat_loss(x_hat, X[:, t]).view(batch_size, -1).sum(1).mean(0) ##### Spatial Loss due to x_hat #####
+            spatial_loss_rbar += self.spat_loss(x_bar, X[:, t]).view(batch_size, -1).sum(1).mean(0) ###### Spatial Loss due to x_bar #####
             temp_loss += torch.pow(r - r_bar,2).view(batch_size, -1).sum(1).mean(0)  
             
             if self.show_progress:
