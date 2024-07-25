@@ -39,7 +39,7 @@ train:
   batch_size_input: true
   batch_size: 32768
   normalize: true
-  add_basic_features: true
+  add_basic_features: false
   only_basic_features: false
 
 delay:

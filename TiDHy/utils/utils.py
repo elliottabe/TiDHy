@@ -61,6 +61,45 @@ def cos_sim_mat(x, dim=-1):
     cos_sim = torch.sum(torch.abs(torch.tril(F.cosine_similarity(x[..., None, :, :], x[..., :, None, :], dim=dim),diagonal=-1)))
     return cos_sim
 
+def walk_dict(d, depth=0):
+    ''' Recurssively Walks through a dictionary and prints the keys and values'''
+    for k,v in sorted(d.items(),key=lambda x: x[0]):
+        if isinstance(v, dict):
+            print(("  ")*depth + ('{}'.format(k)))
+            walk_dict(v,depth+1)
+        elif isinstance(v, np.ndarray):
+            print(("  ")*depth + '{}: {}'.format(k, v.shape))
+        else:
+            print(("  ")*depth + '{}: {}'.format(k, v))
+
+
+def get_data_value(data, data_name, reshape=None):
+    ''' Extracts data from a dictionary of dictionaries and lists'''
+    d = data
+    results = []
+    for item in item_generator(d, data_name):
+        results.append(np.stack(item))
+    if reshape is not None:
+        return np.stack(results).reshape(reshape)
+    else:
+        return np.stack(results)
+
+    # return np.stack([*item_generator(d, data_name)])
+
+
+def item_generator(dict_input, lookup_key):
+    if isinstance(dict_input, dict):
+        if lookup_key in dict_input:
+            yield dict_input[lookup_key]
+        else:
+            for v in dict_input.values():
+                yield from item_generator(v, lookup_key)
+
+    elif isinstance(dict_input, list):
+        for item in dict_input:
+            yield from item_generator(item, lookup_key)
+            
+
 class RunningAverage():
     """A simple class that maintains the running average of a quantity
 

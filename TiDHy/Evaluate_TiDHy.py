@@ -148,6 +148,7 @@ def run_seq_len_model(seq_len, model, data_dict, device, epoch, cfg, rerun=False
         result_dict = ioh5.load(cfg.paths.log_dir/'temp_results_{}_seq.h5'.format(epoch))
         return cfg, result_dict
     else: 
+        cfg.model.batch_converge=False
         cfg.train.sequence_length = int(np.max(seq_len))
         data_dict, cfg = load_dataset(cfg)
         result_dict_all = {}

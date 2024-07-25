@@ -15,7 +15,7 @@ import TiDHy.utils.io_dict_to_hdf5 as ioh5
 from TiDHy.models.TiDHy import *
 from TiDHy.utils.utils import *
 from TiDHy.Train_TiDHy import train
-from TiDHy.Evaluate_TiDHy import evaluate, fit_SLDS
+from TiDHy.Evaluate_TiDHy import evaluate, fit_SLDS, run_seq_len_model
 from TiDHy.datasets import *
 from TiDHy.utils.plotting import *
 
@@ -258,6 +258,13 @@ def parse_hydra_config(cfg : DictConfig):
     
     if (cfg.dataset_name == 'SLDS'):
         fit_SLDS(cfg,data_dict)
+        
+    seq_len = [100,200,500,1000]
+    cfg, result_dict = run_seq_len_model(seq_len, model, data_dict, device, data_load['epoch'], cfg, rerun=True)
+
+    data_dict, cfg = load_dataset(cfg)
+    seq_len = sorted([int(el) for el in list(result_dict.keys())])
+    print('Sequence Lengths:', seq_len)
     
 if __name__ == "__main__":
     parse_hydra_config()
