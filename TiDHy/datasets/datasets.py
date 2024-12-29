@@ -19,7 +19,7 @@ def load_dataset(cfg):
     print('Creating Dataset: {}'.format(cfg.dataset.name))
     data_dict = {}
     if cfg.dataset.name == 'CalMS21':
-        inputs_train,inputs_test,annotations_train,annotations_test,vocabulary,keypoint_names = load_CalMS21_dataset(cfg)
+        inputs_train,inputs_test,annotations_train,annotations_test,vocabulary,keypoint_names, pos_shape_train, pos_shape_test = load_CalMS21_dataset(cfg)
         if cfg.delay.delay_embed:
             cfg.delay['orig_input_size'] = inputs_train.shape[-1]
             inputs_train = delay_embedding(inputs_train,cfg.delay.delay_tau,cfg.delay.skipt)
@@ -32,6 +32,8 @@ def load_dataset(cfg):
         data_dict['annotations_val'] = annotations_test
         data_dict['vocabulary'] = vocabulary
         data_dict['keypoint_names'] = keypoint_names
+        data_dict['pos_shape_train'] = pos_shape_train
+        data_dict['pos_shape_test'] = pos_shape_test
     elif cfg.dataset.name == 'LDS':
         ssm_params = cfg.dataset.ssm_params
         lds_dict, data_dict = partial_superposition_LDS(cfg,ssm_params,**ssm_params)
@@ -194,6 +196,8 @@ def load_CalMS21_dataset(cfg):
     keypoint_names = ['nose', 'ear_left', 'ear_right', 'neck', 'hip_left', 'hip_right', 'tail_base']
     pose_estimates_train = [train_data_dict['annotator-id_0'][j]['keypoints'] for j in list(train_data_dict['annotator-id_0'].keys())]
     pose_estimates_test = [test_data_dict['annotator-id_0'][j]['keypoints'] for j in list(test_data_dict['annotator-id_0'].keys())]
+    pos_shape_train = [train_data_dict['annotator-id_0'][j]['keypoints'].shape for j in list(train_data_dict['annotator-id_0'].keys())]
+    pos_shape_test = [test_data_dict['annotator-id_0'][j]['keypoints'].shape for j in list(test_data_dict['annotator-id_0'].keys())]
     annotations_train = [train_data_dict['annotator-id_0'][j]['annotations'] for j in list(train_data_dict['annotator-id_0'].keys())]
     annotations_test = [test_data_dict['annotator-id_0'][j]['annotations'] for j in list(test_data_dict['annotator-id_0'].keys())]
     train_data = np.concatenate([seq.reshape(seq.shape[0],-1) for seq in pose_estimates_train if seq.shape[0] > cfg.train['sequence_length']],axis=0)
@@ -216,7 +220,7 @@ def load_CalMS21_dataset(cfg):
             test_inputs = calc_basic_features(test_inputs,only_basic=False)
     # else:
     
-    return train_inputs,test_inputs,annotations_train,annotations_test,vocabulary,keypoint_names
+    return train_inputs,test_inputs,annotations_train,annotations_test,vocabulary,keypoint_names, pos_shape_train, pos_shape_test
 
 def calc_basic_features(data,only_basic=None):
     m1 = data[:,:14].reshape(-1,2,7)

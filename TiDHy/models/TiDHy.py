@@ -155,14 +155,7 @@ class TiDHy(nn.Module):
         """Forward pass"""
         batch_size = X.size(0)
         T = X.size(1)
-        ##### Handle stateful latents that carry from epoch to epoch #####
-        # if (self.training==False) | (self.r2_state is None) | (self.stateful==False):
         r, r2 = self.init_code_(batch_size)
-        r = self.inf_first_step(X[:, 0])
-        # else:
-        #     r = self.inf_first_step(X[:, 0])
-        #     r, _ = self.init_code_(batch_size)
-        #     r2 = self.r2_state.detach().clone()
         r_first = r.detach().clone()
         spatial_loss_rhat = self.spat_loss(self.spatial_decoder(r), X[:, 0]).view(batch_size, -1).sum(1).mean(0)
         spatial_loss_rbar = torch.zeros_like(spatial_loss_rhat)
@@ -170,8 +163,7 @@ class TiDHy(nn.Module):
         r2_losses = 0
         if (self.show_progress):
             log = logging.getLogger(__name__)
-            # t_range = tqdm(range(1, T),leave=False,dynamic_ncols=True)
-            t_range = range(1, T)
+            t_range = tqdm(range(1, T),leave=False,dynamic_ncols=True)
         else:
             t_range = range(1, T)
         for t in t_range:
