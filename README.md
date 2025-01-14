@@ -1,4 +1,4 @@
-# TiDHy: Timescale demixing via Hypernetworks
+# TiDHy: Timescale Demixing via Hypernetworks
 
 
 ## Setup for installing conda environment and dependencies
