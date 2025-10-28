@@ -4,7 +4,7 @@ import pandas as pd
 import numpy.random as npr
 from TiDHy.utils import random_rotation, set_seed
 import TiDHy.utils.io_dict_to_hdf5 as ioh5
-import torch
+# import torch
 
 def load_dataset(cfg):
     """ Load dataset based on the configuration file.
@@ -401,7 +401,7 @@ def partial_superposition_SLDS(cfg, ssm_params, timescales=None, normalize=False
         lds_dict={}
     else:
         npr.seed(seed)
-        torch.manual_seed(seed)
+        # torch.manual_seed(seed)
         # Make an LDS with somewhat interesting dynamics parameters
         lds_dict = {}
         states_z, states_z_test, states_z_val =  [], [], []
