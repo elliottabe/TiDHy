@@ -1,0 +1,39 @@
+# set default task and default training config based on dataset
+defaults:
+  - dataset: SLDS
+  - paths: workstation
+  - _self_
+
+# Dataset name - used to pick the data to load
+dataset_name: ${dataset.name}
+
+##### Easy Access Variables #####
+version: ${dataset.version}
+run_id: 'Testing'
+load_jobid: ''
+note: ''
+restore_checkpoint: ''
+# model hyperparameters overrides
+r2_dim: ''
+r_dim: ''
+mix_dim: ''
+L1_alpha: ''
+L1_alpha_inf: ''
+seed: 42
+
+# set the directory where the output files get saved
+hydra:
+  job:
+      config:
+        override_dirname:
+          exclude_keys:
+            - paths
+            - version
+            - dataset
+            - dataset.train.gpu
+  run:
+    # dir: ${paths.base_dir}/${hydra:job.override_dirname}
+    dir: ${paths.base_dir}/run_id=${run_id}
+  sweep:
+    dir: ${paths.base_dir}/run_id=${run_id}
+    subdir: ${hydra.job.override_dirname}

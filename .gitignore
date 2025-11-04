@@ -133,5 +133,6 @@ Figures/
 Results/
 Archive/
 .vscode/
+tmp/
 
 *.code-workspace
