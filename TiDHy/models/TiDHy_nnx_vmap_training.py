@@ -46,12 +46,17 @@ def compute_task_gradient_norms(
     """
     def weighted_loss_fn(mdl: TiDHy):
         """Compute weighted loss for gradient computation with sparsity regularization"""
-        # Create vmapped version of model
-        def forward_single(seq):
-            return mdl(seq, return_internals=True)
+        # Generate random keys for each sequence in the batch
+        batch_size = X_batch.shape[0]
+        base_key = mdl.rngs()  # Get key outside vmap
+        keys = jax.random.split(base_key, batch_size)
 
-        vmapped_forward = jax.vmap(forward_single, in_axes=0)
-        losses_and_internals = vmapped_forward(X_batch)
+        # Create vmapped version of model
+        def forward_single(seq, key):
+            return mdl(seq, return_internals=True, rng_key=key)
+
+        vmapped_forward = jax.vmap(forward_single, in_axes=(0, 0))
+        losses_and_internals = vmapped_forward(X_batch, keys)
         losses_per_seq, internals_per_seq = losses_and_internals
 
         spatial_loss_rhat, spatial_loss_rbar, temp_loss = losses_per_seq
@@ -100,11 +105,16 @@ def compute_task_gradient_norms(
     for i in range(3):
         # Compute gradient for this individual weighted task
         def single_task_loss(mdl: TiDHy):
-            def forward_single(seq):
-                return mdl(seq, return_internals=True)
+            # Generate random keys for each sequence in the batch
+            batch_size = X_batch.shape[0]
+            base_key = mdl.rngs()  # Get key outside vmap
+            keys = jax.random.split(base_key, batch_size)
 
-            vmapped_forward = jax.vmap(forward_single, in_axes=0)
-            losses_and_internals = vmapped_forward(X_batch)
+            def forward_single(seq, key):
+                return mdl(seq, return_internals=True, rng_key=key)
+
+            vmapped_forward = jax.vmap(forward_single, in_axes=(0, 0))
+            losses_and_internals = vmapped_forward(X_batch, keys)
             losses_per_seq, internals_per_seq = losses_and_internals
 
             spatial_loss_rhat, spatial_loss_rbar, temp_loss = losses_per_seq
@@ -164,11 +174,16 @@ def apply_gradnorm(
     # Initialize on first iteration
     if model.loss_weights is None:
         # Get initial losses using vmap
-        def forward_single(seq):
-            return model(seq, return_internals=True)
+        # Generate random keys for each sequence in the batch
+        batch_size = X_batch.shape[0]
+        base_key = model.rngs()  # Get key outside vmap
+        keys = jax.random.split(base_key, batch_size)
 
-        vmapped_forward = jax.vmap(forward_single, in_axes=0)
-        losses_and_internals = vmapped_forward(X_batch)
+        def forward_single(seq, key):
+            return model(seq, return_internals=True, rng_key=key)
+
+        vmapped_forward = jax.vmap(forward_single, in_axes=(0, 0))
+        losses_and_internals = vmapped_forward(X_batch, keys)
         losses_per_seq, internals_per_seq = losses_and_internals
 
         spatial_loss_rhat, spatial_loss_rbar, temp_loss = losses_per_seq
@@ -341,8 +356,11 @@ def create_multi_lr_optimizer(
     temporal_tx = optax.masked(optax.adamw(lr_t, weight_decay=weight_decay), temporal_mask)
     hyper_tx = optax.masked(optax.adamw(lr_h, weight_decay=weight_decay), hyper_mask)
 
-    # Chain the masked optimizers
-    multi_tx = optax.chain(spatial_tx, temporal_tx, hyper_tx)
+    # Add gradient clipping to prevent NaN from exploding gradients
+    clip_tx = optax.clip_by_global_norm(1.0)
+
+    # Chain gradient clipping with the masked optimizers
+    multi_tx = optax.chain(clip_tx, spatial_tx, temporal_tx, hyper_tx)
 
     # Create NNX optimizer
     return nnx.Optimizer(model=model, tx=multi_tx, wrt=nnx.Param)
@@ -391,15 +409,20 @@ def train_step_single(
             We vmap the model's __call__ to process all sequences in the batch.
             """
             # Create vmapped version of model that processes batches
-            # Define function that processes single sequence with internals
-            def forward_single(seq):
-                return model(seq, return_internals=True)
+            # Generate random keys for each sequence in the batch
+            batch_size = X_batch.shape[0]
+            base_key = model.rngs()  # Get key outside vmap
+            keys = jax.random.split(base_key, batch_size)
 
-            # Vmap over batch dimension
-            vmapped_forward = jax.vmap(forward_single, in_axes=0)
+            # Define function that processes single sequence with internals
+            def forward_single(seq, key):
+                return model(seq, return_internals=True, rng_key=key)
+
+            # Vmap over batch dimension and keys
+            vmapped_forward = jax.vmap(forward_single, in_axes=(0, 0))
 
             # Get per-sequence losses and internals
-            losses_and_internals = vmapped_forward(X_batch)
+            losses_and_internals = vmapped_forward(X_batch, keys)
             losses_per_seq, internals_per_seq = losses_and_internals
 
             # losses_per_seq is a tuple of 3 arrays, each of shape (batch_size,)
@@ -648,13 +671,18 @@ def train_model(
             # Get a sample batch for sparsity analysis
             sample_size = min(batch_size if batch_size else len(train_data), 8)  # Limit to 8 samples
             sample_data = train_data[:sample_size]
-            
+
             # Forward pass to get internals
-            def forward_single(seq):
-                return model(seq, return_internals=True)
-            
-            vmapped_forward = jax.vmap(forward_single, in_axes=0)
-            _, (r_values, r2_values, w_values) = vmapped_forward(sample_data)
+            # Generate random keys for each sequence
+            sample_size_actual = sample_data.shape[0]
+            base_key = model.rngs()  # Get key outside vmap
+            keys = jax.random.split(base_key, sample_size_actual)
+
+            def forward_single(seq, key):
+                return model(seq, return_internals=True, rng_key=key)
+
+            vmapped_forward = jax.vmap(forward_single, in_axes=(0, 0))
+            _, (r_values, r2_values, w_values) = vmapped_forward(sample_data, keys)
             
             log_sparsity_analysis(
                 model, r_values, r2_values, w_values, step=epoch
@@ -676,12 +704,17 @@ def train_model(
 @nnx.jit
 def _evaluate_batch_basic(model: TiDHy, X: jax.Array) -> Dict[str, float]:
     """JIT-compiled basic evaluation without sparsity metrics."""
-    # Vmap the model over batch dimension
-    def forward_single(seq):
-        return model(seq, return_internals=False)
+    # Generate random keys for each sequence in the batch
+    batch_size = X.shape[0]
+    base_key = model.rngs()  # Get key outside vmap
+    keys = jax.random.split(base_key, batch_size)
 
-    vmapped_forward = jax.vmap(forward_single, in_axes=0)
-    losses_per_seq = vmapped_forward(X)
+    # Vmap the model over batch dimension
+    def forward_single(seq, key):
+        return model(seq, return_internals=False, rng_key=key)
+
+    vmapped_forward = jax.vmap(forward_single, in_axes=(0, 0))
+    losses_per_seq = vmapped_forward(X, keys)
     spatial_loss_rhat, spatial_loss_rbar, temp_loss = losses_per_seq
 
     # Average over batch
@@ -707,12 +740,17 @@ def _evaluate_batch_basic(model: TiDHy, X: jax.Array) -> Dict[str, float]:
 
 def _evaluate_batch_with_sparsity(model: TiDHy, X: jax.Array) -> Dict[str, float]:
     """Evaluation with sparsity metrics (not JIT-compiled due to dynamic structure)."""
-    # Vmap the model over batch dimension
-    def forward_single(seq):
-        return model(seq, return_internals=True)
+    # Generate random keys for each sequence in the batch
+    batch_size = X.shape[0]
+    base_key = model.rngs()  # Get key outside vmap
+    keys = jax.random.split(base_key, batch_size)
 
-    vmapped_forward = jax.vmap(forward_single, in_axes=0)
-    losses_and_internals = vmapped_forward(X)
+    # Vmap the model over batch dimension
+    def forward_single(seq, key):
+        return model(seq, return_internals=True, rng_key=key)
+
+    vmapped_forward = jax.vmap(forward_single, in_axes=(0, 0))
+    losses_and_internals = vmapped_forward(X, keys)
     losses_per_seq, internals_per_seq = losses_and_internals
     spatial_loss_rhat, spatial_loss_rbar, temp_loss = losses_per_seq
     
@@ -783,7 +821,8 @@ def evaluate_batch(model: TiDHy, X: jax.Array, include_sparsity: bool = False) -
 
 def evaluate_record(
     model: TiDHy,
-    X: jax.Array
+    X: jax.Array,
+    rng,
 ) -> Tuple[float, float, float, Dict[str, jax.Array]]:
     """
     Forward pass for evaluation with full recording using vmap.
@@ -793,29 +832,32 @@ def evaluate_record(
     Args:
         model: TiDHy model instance
         X: Input data of shape (batch_size, T, input_dim)
+        rng: JAX random key for initialization
 
     Returns:
         Tuple of (spatial_loss_rhat_avg, spatial_loss_rbar_avg, temp_loss_avg, result_dict)
     """
     batch_size, T, input_dim = X.shape
 
-    def record_single_sequence(x_seq):
+    def record_single_sequence(x_seq, rng_key):
         """
         Process a single sequence and record all values.
 
         Args:
             x_seq: Single sequence of shape (T, input_dim)
+            rng_key: JAX random key for this sequence
 
         Returns:
             Dictionary of recorded values
         """
+        init_key, first_step_key = jax.random.split(rng_key)
         # Initialize
-        _, r2_init = model.init_code()
+        _, r2_init = model.init_code(init_key)
 
         spat_loss_fn = model.get_spatial_loss_fn()
 
         # First step
-        r0, r2_0 = model.inf_first_step(x_seq[0])
+        r0, r2_0 = model.inf_first_step(x_seq[0], first_step_key)
         x_hat_0 = model.spatial_decoder(r0)
         x_bar_0 = model.spatial_decoder(jnp.zeros(model.r_dim))
 
@@ -905,9 +947,12 @@ def evaluate_record(
             'temp_loss': temp_losses
         }
 
+    # Generate random keys for each sequence in the batch
+    keys = jax.random.split(rng, batch_size)
+
     # Vmap over batch
-    vmapped_record = jax.vmap(record_single_sequence, in_axes=0)
-    result_dict = vmapped_record(X)
+    vmapped_record = jax.vmap(record_single_sequence, in_axes=(0, 0))
+    result_dict = vmapped_record(X, keys)
 
     # Add input data
     result_dict['I'] = X
@@ -1349,13 +1394,18 @@ def train_model_with_checkpointing(
             # Get a sample batch for sparsity analysis
             sample_size = min(batch_size if batch_size else len(train_data), 8)  # Limit to 8 samples
             sample_data = train_data[:sample_size]
-            
+
             # Forward pass to get internals
-            def forward_single(seq):
-                return model(seq, return_internals=True)
-            
-            vmapped_forward = jax.vmap(forward_single, in_axes=0)
-            _, (r_values, r2_values, w_values) = vmapped_forward(sample_data)
+            # Generate random keys for each sequence
+            sample_size_actual = sample_data.shape[0]
+            base_key = model.rngs()  # Get key outside vmap
+            keys = jax.random.split(base_key, sample_size_actual)
+
+            def forward_single(seq, key):
+                return model(seq, return_internals=True, rng_key=key)
+
+            vmapped_forward = jax.vmap(forward_single, in_axes=(0, 0))
+            _, (r_values, r2_values, w_values) = vmapped_forward(sample_data, keys)
             
             log_sparsity_analysis(
                 model, r_values, r2_values, w_values, step=epoch

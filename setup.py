@@ -18,6 +18,6 @@ setup(
         'Intended Audience :: Science/Research',
         'License :: OSI Approved :: BSD License',  
         'Operating System :: POSIX :: Linux',
-        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.13',
     ],
 )

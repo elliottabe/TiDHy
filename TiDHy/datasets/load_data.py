@@ -3,6 +3,7 @@ import jax.numpy as jnp
 import jax.random
 import TiDHy.utils.io_dict_to_hdf5 as ioh5
 from TiDHy.datasets.datasets_dynamax import partial_superposition_SLDS
+from TiDHy.datasets.rossler_dataset import hierarchical_rossler_dataset
 
 def load_data(cfg):
     
@@ -33,6 +34,9 @@ def load_data(cfg):
         data_dict['keypoint_names'] = keypoint_names
         data_dict['pos_shape_train'] = pos_shape_train
         data_dict['pos_shape_test'] = pos_shape_test
+    elif cfg.dataset.name == 'Rossler':
+        rossler_params = cfg.dataset.rossler_params
+        data_dict = hierarchical_rossler_dataset(cfg, rossler_params)
     else:
         raise ValueError(f"Dataset {cfg.dataset.name} not recognized.")
     

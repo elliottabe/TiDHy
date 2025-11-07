@@ -14,7 +14,7 @@ Usage:
     losses = batched_forward(batch_sequences)  # (batch_size, T, input_dim) -> (batch_size,)
 """
 
-from typing import Tuple
+from typing import Optional, Tuple
 import jax
 import jax.numpy as jnp
 from flax import nnx
@@ -549,6 +549,9 @@ class TiDHy(nnx.Module):
         self.show_progress = show_progress
         self.show_inf_progress = show_inf_progress
 
+        # Store RNG state for dynamic random initialization
+        self.rngs = rngs
+
         # GradNorm tracking (not Parameters, just state)
         self.loss_weights = None
         self.loss_weights_inf = None
@@ -620,23 +623,26 @@ class TiDHy(nnx.Module):
         else:  # MSE
             return lambda pred, obs: (pred - obs) ** 2
 
-    def init_code(self) -> Tuple[jax.Array, jax.Array]:
+    def init_code(self, key: jax.Array) -> Tuple[jax.Array, jax.Array]:
         """
         Initialize latent codes for a single sequence.
+
+        Args:
+            key: JAX random key for initialization
 
         Returns:
             Tuple of (r, r2) with shapes (r_dim,) and (r2_dim,)
         """
         r = jnp.zeros(self.r_dim)
         # Initialize r2 with small random values instead of zeros to avoid dead neurons
-        key = jax.random.PRNGKey(0)  # Fixed seed for reproducibility
         r2 = jax.random.normal(key, (self.r2_dim,)) * 0.01
         return r, r2
 
     def __call__(
         self,
         X: jax.Array,
-        return_internals: bool = False
+        return_internals: bool = False,
+        rng_key: Optional[jax.Array] = None
     ) -> Tuple[jax.Array, jax.Array, jax.Array]:
         """
         Forward pass through the model for a SINGLE sequence.
@@ -644,21 +650,29 @@ class TiDHy(nnx.Module):
         Args:
             X: Input data of shape (T, input_dim) - single sequence
             return_internals: If True, also return r, r2, w values for regularization
+            rng_key: Optional JAX random key for initialization. If None, uses self.rngs()
 
         Returns:
             Tuple of (spatial_loss_rhat, spatial_loss_rbar, temp_loss)
             Each is a scalar for this single sequence
-            
+
             If return_internals=True, returns additional tuple:
             (losses, (r_values, r2_values, w_values))
         """
         T = X.shape[0]
 
+        # Get or generate RNG key
+        if rng_key is None:
+            rng_key = self.rngs()  # Only called outside vmap
+
+        # Split key for init_code and inf_first_step
+        key_init, key_inf = jax.random.split(rng_key)
+
         # Initialize codes for this sequence
-        _, r2 = self.init_code()
+        _, r2 = self.init_code(key_init)
 
         # Infer first code (stop gradients - we only need gradients w.r.t. decoder parameters)
-        r_inferred, r2_inferred = self.inf_first_step(X[0])
+        r_inferred, r2_inferred = self.inf_first_step(X[0], key_inf)
         r = jax.lax.stop_gradient(r_inferred)
         r2 = jax.lax.stop_gradient(r2_inferred)  # Use inferred r2 instead of zeros
 
@@ -902,13 +916,14 @@ class TiDHy(nnx.Module):
 
         return r, r2
 
-    def inf_first_step(self, x: jax.Array) -> Tuple[jax.Array, jax.Array]:
+    def inf_first_step(self, x: jax.Array, key: jax.Array) -> Tuple[jax.Array, jax.Array]:
         """
         First step inference: p(r_1, r2_1 | x_1)
         Now optimizes both r and r2 to give r2 a chance to learn
 
         Args:
             x: First observation of shape (input_dim,)
+            key: JAX random key for initialization
 
         Returns:
             Tuple of (inferred r, inferred r2) at time 1
@@ -916,7 +931,7 @@ class TiDHy(nnx.Module):
         """
         r = jnp.zeros(self.r_dim)
         # Initialize r2 with small values to avoid starting from zero
-        _, r2 = self.init_code()
+        _, r2 = self.init_code(key)
 
         # Create optimizers for both r and r2
         optimizer_r = optax.sgd(self.lr_r, momentum=0.9, nesterov=True)

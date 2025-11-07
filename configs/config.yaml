@@ -31,6 +31,7 @@ hydra:
             - version
             - dataset
             - dataset.train.gpu
+            - run_id
   run:
     # dir: ${paths.base_dir}/${hydra:job.override_dirname}
     dir: ${paths.base_dir}/run_id=${run_id}
