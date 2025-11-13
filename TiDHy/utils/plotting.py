@@ -1,11 +1,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import torch
-import torch.nn.functional as F
+# import torch
+# import torch.nn.functional as F
 import matplotlib.gridspec as gridspec
 import seaborn as sns
 
-from TiDHy.utils.utils import angle_between, add_colorbar
+# from TiDHy.utils.utils import angle_between, add_colorbar
 
 ##### Plotting settings ######
 import matplotlib as mpl
@@ -796,3 +796,4 @@ def plot_spatial_rf(U, size=(10,4)):
     ax.set_ylabel('Latent Variables')
     plt.tight_layout()
     return fig, axs
+

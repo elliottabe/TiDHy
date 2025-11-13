@@ -1,41 +1,13 @@
 # @package _global_
 
-defaults:
-  - model/sparsity@model
-  - _self_
-
 dataset:
   name: CalMS21
   version: Debug
 
-model:
-  # Override specific parameters for CalMS21 dataset
-  grad_norm_inf: false
-  grad_alpha_inf: 1.0
-  cos_eta: 5.0
-  # Regularization parameters
-  L1_alpha: ${resolve_default:0.0,${L1_alpha}}
-  L1_alpha_inf: ${resolve_default:0.0,${L1_alpha_inf}}
-  L1_alpha_r2: 0.0
-  L1_inf_r2: 0.0
-  L1_inf_w: 0.0
-  L1_inf_r: 0.0
-  lmda_r: 0.0
-  lmda_r2: 0.0
-  # Combined sparsity regularization settings
-  sparsity_r_l1: 0.005          # Mild L1 for r
-  sparsity_r2_adaptive: 0.015   # Adaptive for precise r2 control  
-  sparsity_w_safe: 0.008        # SAFE hypernetwork sparsity
-  target_sparsity_r2: 0.8
-  sparsity_temperature: 1.5
-  w_min_active_ratio: 0.3
-  weight_decay: 0.00001
-
-
 train:
   wandb_project: "TiDHy_eabe"
   num_epochs: 1000
-  sequence_length: 200
+  sequence_length: 1000
   overlap_factor: 5
   stack_inputs: true
   save_summary_steps: 100
@@ -44,8 +16,15 @@ train:
   test: false
   batch_size_input: true
   batch_size: null
-  add_basic_features: false
-  only_basic_features: false
+
+  # Feature extraction type
+  # Options:
+  #   - 'raw': Raw 28D keypoint positions (2 mice × 7 keypoints × 2 coords)
+  #   - 'option_a': Positions + Velocities + Social features (65D)
+  #   - 'option_b': Egocentric (body-centric) features (64D)
+  #   - 'basic': Legacy basic social features (3D or 31D)
+  feature_type: 'option_a'
+
   normalize: true
   ##### Learning rates for different components #####
   # Multi-LR training
@@ -58,7 +37,7 @@ train:
   # Single LR fallback (if multi-LR not specified)
   learning_rate: 1e-3
   lr_weights: 0.01  # GradNorm settings
-  grad_norm: true  # Use GradNorm for loss balancing
+  grad_norm: false  # Use GradNorm for loss balancing
   grad_alpha: 0.5
   weight_decay: 0.00001
   ##### Logging settings #####

@@ -253,7 +253,10 @@ def main(cfg: DictConfig) -> None:
         'val_shape': val_inputs.shape,
         'input_dim': input_dim
     }
-    setup_wandb(cfg, run_id, model, data_info)
+    
+    use_wandb = getattr(cfg.train, 'use_wandb', False)
+    if use_wandb:
+        setup_wandb(cfg, run_id, model, data_info)
 
     # Save configuration
     temp_cfg = cfg.copy()
@@ -277,7 +280,7 @@ def main(cfg: DictConfig) -> None:
         verbose=True,
         checkpoint_every=getattr(cfg.train, 'save_summary_steps', 1),
         # Enable wandb logging (wandb already initialized above)
-        use_wandb=True,
+        use_wandb=use_wandb,
         log_params_every=getattr(cfg.train, 'log_params_every', 10),
         log_sparsity_every=getattr(cfg.train, 'log_sparsity_every', 5)
     )
@@ -287,21 +290,23 @@ def main(cfg: DictConfig) -> None:
     spatial_loss_rhat, spatial_loss_rbar, temp_loss, _ = evaluate_record(
         trained_model,
         val_inputs,
+        model.rngs(),
     )
 
     final_val_loss = spatial_loss_rhat + spatial_loss_rbar + temp_loss
     logging.info(f'Final validation loss: {final_val_loss:.4f}')
 
     # Log final metrics
-    wandb.log({
-        'final/val_spatial_loss_rhat': float(spatial_loss_rhat),
-        'final/val_spatial_loss_rbar': float(spatial_loss_rbar),
-        'final/val_temp_loss': float(temp_loss),
-        'final/val_total_loss': float(final_val_loss)
-    })
+    if use_wandb:
+        wandb.log({
+            'final/val_spatial_loss_rhat': float(spatial_loss_rhat),
+            'final/val_spatial_loss_rbar': float(spatial_loss_rbar),
+            'final/val_temp_loss': float(temp_loss),
+            'final/val_total_loss': float(final_val_loss)
+        })
 
-    # ===== 8. Cleanup =====
-    wandb.finish()
+        # ===== 8. Cleanup =====
+        wandb.finish()
     logging.info('Training completed successfully!')
 
 

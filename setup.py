@@ -1,23 +1,11 @@
-from setuptools import find_packages, setup
+"""
+TiDHy: Time-Dependent Hybrid Dynamical Systems
 
-setup(
-    name='TiDHy',
-    version='0.1.0',    
-    description='Code to train TiDHy models with pytorch',
-    url='https://github.com/elliottabe/TiDHy',
-    author='Elliott T. T. Abe',
-    author_email='elliottabe@gmail.com',
-    license='BSD 2-clause',
-    packages=find_packages(),
-    install_requires=['pandas',
-                      'numpy',                     
-                      ],
+This setup.py is maintained for backward compatibility.
+Package configuration is primarily in pyproject.toml.
+"""
+from setuptools import setup
 
-    classifiers=[
-        'Development Status :: 1 - Planning',
-        'Intended Audience :: Science/Research',
-        'License :: OSI Approved :: BSD License',  
-        'Operating System :: POSIX :: Linux',
-        'Programming Language :: Python :: 3.13',
-    ],
-)
+# All configuration is now in pyproject.toml
+# This setup.py is a minimal shim for compatibility with older tools
+setup()

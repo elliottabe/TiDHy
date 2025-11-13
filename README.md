@@ -1,30 +1,116 @@
 # TiDHy: Timescale Demixing via Hypernetworks
 
+## Installation
 
-## Setup for installing conda environment and dependencies
-To install the repo there is a conda environment that will install the necessary packages. Make sure you are in the TiDHy Github directory.  
-Use command:  
-`conda env create -f environment.yaml`
+TiDHy provides two conda environments optimized for different use cases:
 
-After installing activate the conda environment:  
-`conda activate TiDHy`
+### Quick Start: TiDHy Environment (Main Development)
 
-After pytorch is correctly installed run this command to install pip requirements:  
-`pip install -r requirements.txt`
+The TiDHy environment includes JAX/Flax, RAPIDS for GPU-accelerated operations, and all necessary dependencies.
 
-If the requirements.txt file does not install pytorch with cuda, go to this site to install the appropriate pytorch version:  
-https://pytorch.org/get-started/locally/
+**One-command setup:**
+```bash
+bash setup_tidhy_env.sh
+```
 
-To install TiDHy, in the repo folder use:  
-`pip install -e .`
+This script will:
+1. Create the conda environment with Python 3.11, RAPIDS 24.12, and CUDA 12.x support
+2. Install all Python packages using UV (fast dependency resolver)
+3. Install TiDHy as an editable package
+4. Verify the installation and check GPU/CUDA availability
 
-For SLDS comparison install ssm package:  
-https://github.com/lindermanlab/ssm
+**Activate the environment:**
+```bash
+conda activate TiDHy
+```
+
+### SSM Baseline Environment (Optional)
+
+For running SSM baseline comparisons (ARHMM, SLDS, etc.):
+
+```bash
+bash setup_ssm_env.sh
+```
+
+**Activate the environment:**
+```bash
+conda activate ssm
+```
+
+### Manual Installation (Advanced)
+
+If you prefer manual setup:
+
+1. **Create conda environment:**
+   ```bash
+   conda env create -f environment.yaml  # For TiDHy
+   # OR
+   conda env create -f ssm_environment.yml  # For SSM baselines
+   ```
+
+2. **Activate environment:**
+   ```bash
+   conda activate TiDHy  # or 'ssm'
+   ```
+
+3. **Install Python packages with UV:**
+   ```bash
+   uv pip install --find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html \
+     'jax[cuda12]>=0.4.20' 'jaxlib>=0.4.20' 'flax>=0.8.0' \
+     'optax>=0.1.7' 'orbax-checkpoint>=0.4.0' 'chex>=0.1.8' \
+     'dynamax>=1.0.0' 'scikit-learn>=1.3.0' \
+     'hydra-core>=1.3.0' 'omegaconf>=2.3.0' 'wandb' \
+     'tqdm>=4.65.0' 'natsort' -e .
+   ```
+
+### Requirements
+
+- **Conda/Miniconda**: Required for environment management
+- **CUDA 12.x**: For GPU acceleration (check with `nvidia-smi`)
+- **Python 3.11**: Installed automatically by conda
+
+### Verify Installation
+
+Check if JAX can detect your GPU:
+```bash
+python -c "import jax; print(jax.devices())"
+```
+
+Expected output should show CUDA/GPU devices if properly configured.
 
 
-## Example Code
-To Train TiDHy you can run the Run_TiDHy.py script from the terminal with hydra overrides:  
-`python Run_TiDHy.py Run_TiDHy.py dataset=SLDS dataset.train.gpu=0 version=Example`
+## Usage
+
+### Training TiDHy Models
+
+Run the main training script with Hydra configuration overrides:
+
+```bash
+python Run_TiDHy_NNX_vmap.py dataset=SLDS model=sparsity
+```
+
+Available datasets: `SLDS`, `SSM`, `Rossler`, `AnymalTerrain`, `CalMS21`
+
+Available model configs: `default_model`, `sparsity`, `r2_sparse`, `r2_smooth`, `r2_hybrid`, `lstm`
+
+### Running Baseline Models
+
+**LSTM baseline:**
+```bash
+python Run_LSTM.py dataset=SLDS
+```
+
+**ARHMM baseline (requires ssm environment):**
+```bash
+conda activate ssm
+python Run_ARHMM.py dataset=SLDS
+```
+
+**SSM baseline (requires ssm environment):**
+```bash
+conda activate ssm
+python Run_SSM.py dataset=SLDS
+```
 
 
 ## Custom Datasets

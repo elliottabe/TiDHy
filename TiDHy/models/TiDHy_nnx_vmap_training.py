@@ -232,9 +232,17 @@ def apply_gradnorm(
     weight_updates = -lr_weights * jnp.sign(gradnorm_diff) * jnp.abs(loss_ratio)
     new_weights = weights + weight_updates
 
+    # Clip before exponential to prevent explosion
+    new_weights = jnp.clip(new_weights, -5.0, 5.0)
+    
     # Renormalize: use exponential and normalize to sum to T
     new_weights = jnp.exp(new_weights)
-    new_weights = (new_weights / jnp.sum(new_weights)) * T
+    
+    # Add safety check for NaN
+    new_weights = jnp.where(jnp.isnan(new_weights), jnp.ones(3), new_weights)
+    
+    # Renormalize
+    new_weights = (new_weights / (jnp.sum(new_weights) + 1e-8)) * T
 
     # Update model state
     model.loss_weights = new_weights
@@ -357,6 +365,9 @@ def create_multi_lr_optimizer(
     hyper_tx = optax.masked(optax.adamw(lr_h, weight_decay=weight_decay), hyper_mask)
 
     # Add gradient clipping to prevent NaN from exploding gradients
+    # clip_by_global_norm(1.0) is already quite conservative - it clips the global norm
+    # of all gradients to 1.0. This helps prevent instability but may need adjustment
+    # if convergence is too slow (increase value) or still seeing NaNs (decrease value).
     clip_tx = optax.clip_by_global_norm(1.0)
 
     # Chain gradient clipping with the masked optimizers
@@ -449,9 +460,31 @@ def train_step_single(
                 w_values.reshape(-1, model.mix_dim)     # Flatten to (batch_size*T, mix_dim)
             )
 
-            # Total loss including sparsity regularization
-            total_loss = (spatial_loss_rhat_mean + spatial_loss_rbar_mean + 
-                         temp_loss_mean + model.cos_eta * cos_reg + sparsity_reg)
+            # Compute r2 continuity loss for overlapping windows
+            r2_continuity_loss = 0.0
+            if model.r2_continuity_weight > 0:
+                # Calculate overlap length from config
+                # overlap = sequence_length - stride
+                # stride = sequence_length // overlap_factor
+                overlap_length = X_batch.shape[1] - (X_batch.shape[1] // 10)  # Default overlap_factor=10
+                r2_continuity_loss = model.compute_r2_continuity_loss(
+                    r2_values,  # (batch_size, T, r2_dim)
+                    overlap_length=overlap_length
+                )
+
+            # Compute r2 temporal smoothness loss
+            r2_temporal_smooth_loss = 0.0
+            if model.r2_temporal_smoothness_train > 0:
+                # r2_values: (batch_size, T, r2_dim)
+                # Compute differences between consecutive timesteps
+                r2_diffs = r2_values[:, 1:, :] - r2_values[:, :-1, :]  # (batch_size, T-1, r2_dim)
+                r2_temporal_smooth_loss = jnp.mean(r2_diffs ** 2)
+
+            # Total loss including sparsity regularization, r2 continuity, and r2 temporal smoothness
+            total_loss = (spatial_loss_rhat_mean + spatial_loss_rbar_mean +
+                         temp_loss_mean + model.cos_eta * cos_reg + sparsity_reg +
+                         model.r2_continuity_weight * r2_continuity_loss +
+                         model.r2_temporal_smoothness_train * r2_temporal_smooth_loss)
 
             # Prepare metrics
             metrics = {
@@ -459,7 +492,9 @@ def train_step_single(
                 'spatial_loss_rbar': spatial_loss_rbar_mean,
                 'temp_loss': temp_loss_mean,
                 'cos_reg': cos_reg,
-                'sparsity_reg': sparsity_reg
+                'sparsity_reg': sparsity_reg,
+                'r2_continuity_loss': r2_continuity_loss,
+                'r2_temporal_smooth_loss': r2_temporal_smooth_loss
             }
             
             # Add sparsity breakdown to metrics
@@ -479,6 +514,12 @@ def train_step_single(
         # Compute gradients
         (loss, metrics), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
 
+        # Compute gradient norm for monitoring
+        grad_norm = jnp.sqrt(
+            sum(jnp.sum(jnp.square(g)) for g in jax.tree.leaves(nnx.state(grads, nnx.Param)))
+        )
+        metrics['grad_norm'] = grad_norm
+        
         # Update parameters
         optimizer.update(grads)
 
@@ -517,7 +558,14 @@ def train_epoch(
 
     if batch_size is None:
         # Single batch - use JIT-compiled function
-        return train_step_single(model, optimizer, train_data, use_gradnorm, grad_alpha)
+        metrics = train_step_single(model, optimizer, train_data, use_gradnorm, grad_alpha)
+        
+        # Check for NaN/Inf after training
+        if jnp.isnan(metrics['loss']) or jnp.isinf(metrics['loss']):
+            print(f"Warning: NaN/Inf detected in loss! Loss value: {float(metrics['loss'])}")
+            raise ValueError("Training became unstable (NaN/Inf loss)")
+        
+        return metrics
 
     # Multiple batches - accumulate metrics efficiently
     n_batches = n_samples // batch_size
@@ -540,7 +588,14 @@ def train_epoch(
     averaged_metrics = jax.tree.map(lambda x: jnp.mean(x), stacked_metrics)
 
     # Convert to Python floats once at the end
-    return {k: float(v) for k, v in averaged_metrics.items()}
+    final_metrics = {k: float(v) for k, v in averaged_metrics.items()}
+    
+    # Check for NaN/Inf after training
+    if jnp.isnan(averaged_metrics['loss']) or jnp.isinf(averaged_metrics['loss']):
+        print(f"Warning: NaN/Inf detected in loss! Loss value: {final_metrics['loss']}")
+        raise ValueError("Training became unstable (NaN/Inf loss)")
+    
+    return final_metrics
 
 
 def train_model(
@@ -567,7 +622,10 @@ def train_model(
     log_sparsity_every: int = 5
 ) -> Tuple[TiDHy, Dict[str, list]]:
     """
-    Train model for multiple epochs.
+    Train model for multiple epochs (simple wrapper without checkpointing).
+    
+    This is a convenience wrapper around train_model_with_checkpointing that
+    disables checkpointing. For more control, use train_model_with_checkpointing directly.
 
     Args:
         model: TiDHy model instance
@@ -594,111 +652,44 @@ def train_model(
     Returns:
         Tuple of (trained model, history dictionary)
     """
-    # Check if we need multi-LR optimizer
-    if learning_rate_s is not None or learning_rate_t is not None or learning_rate_h is not None:
-        # Use component-specific learning rates
-        lr_s = learning_rate_s if learning_rate_s is not None else learning_rate
-        lr_t = learning_rate_t if learning_rate_t is not None else learning_rate
-        lr_h = learning_rate_h if learning_rate_h is not None else learning_rate
-
-        optimizer = create_multi_lr_optimizer(
-            model, lr_s, lr_t, lr_h, weight_decay,
+    # Create a simple config object to pass to train_model_with_checkpointing
+    from types import SimpleNamespace
+    
+    config = SimpleNamespace(
+        train=SimpleNamespace(
+            num_epochs=n_epochs,
+            batch_size=batch_size,
+            batch_size_input=(batch_size is None),
+            learning_rate=learning_rate,
+            learning_rate_s=learning_rate_s,
+            learning_rate_t=learning_rate_t,
+            learning_rate_h=learning_rate_h,
+            weight_decay=weight_decay,
+            grad_norm=use_gradnorm,
+            grad_alpha=grad_alpha,
+            save_summary_steps=val_every_n_epochs,
             use_schedule=use_schedule,
             schedule_transition_steps=schedule_transition_steps,
-            schedule_decay_rate=schedule_decay_rate
+            schedule_decay=schedule_decay_rate
         )
-    else:
-        # Use single learning rate for all parameters
-        optimizer_tx = create_optimizer(learning_rate, weight_decay)
-        optimizer = nnx.Optimizer(model=model, tx=optimizer_tx, wrt=nnx.Param)
-
-    # History
-    history = {
-        'loss': [],
-        'spatial_loss_rhat': [],
-        'spatial_loss_rbar': [],
-        'temp_loss': [],
-        'cos_reg': []
-    }
-
-    if val_data is not None:
-        history['val_loss'] = []
-
-    # Training loop
-    epoch_iter = tqdm(range(n_epochs), desc="Training") if verbose else range(n_epochs)
-
-    for epoch in epoch_iter:
-        # Train using JIT-compiled function
-        metrics = train_epoch(model, optimizer, train_data, batch_size, use_gradnorm, grad_alpha)
-
-        # Record history
-        for key in ['loss', 'spatial_loss_rhat', 'spatial_loss_rbar', 'temp_loss', 'cos_reg']:
-            if key in metrics:
-                history[key].append(float(metrics[key]))
-
-        # Wandb logging for training metrics
-        if use_wandb:
-            log_training_step(
-                metrics, 
-                step=epoch, 
-                prefix="train",
-                log_sparsity=True,
-                log_gradnorm=use_gradnorm
-            )
-
-        # Validation
-        val_loss = None
-        if val_data is not None and (epoch + 1) % val_every_n_epochs == 0:
-            val_metrics = evaluate_batch(model, val_data)
-            val_loss = float(val_metrics['loss'])
-            history['val_loss'].append(val_loss)
-            
-            # Log validation metrics to wandb
-            if use_wandb:
-                log_training_step(
-                    val_metrics,
-                    step=epoch,
-                    prefix="val",
-                    log_sparsity=True
-                )
-
-        # Log model parameters periodically
-        if use_wandb and (epoch + 1) % log_params_every == 0:
-            log_optimization_metrics(optimizer, step=epoch)
-
-        # Log detailed sparsity analysis periodically
-        if use_wandb and (epoch + 1) % log_sparsity_every == 0:
-            # Get a sample batch for sparsity analysis
-            sample_size = min(batch_size if batch_size else len(train_data), 8)  # Limit to 8 samples
-            sample_data = train_data[:sample_size]
-
-            # Forward pass to get internals
-            # Generate random keys for each sequence
-            sample_size_actual = sample_data.shape[0]
-            base_key = model.rngs()  # Get key outside vmap
-            keys = jax.random.split(base_key, sample_size_actual)
-
-            def forward_single(seq, key):
-                return model(seq, return_internals=True, rng_key=key)
-
-            vmapped_forward = jax.vmap(forward_single, in_axes=(0, 0))
-            _, (r_values, r2_values, w_values) = vmapped_forward(sample_data, keys)
-            
-            log_sparsity_analysis(
-                model, r_values, r2_values, w_values, step=epoch
-            )
-
-        # Print progress
-        if verbose:
-            msg = f"Epoch {epoch + 1}/{n_epochs} - Loss: {metrics['loss']:.4f}"
-            if val_loss is not None:
-                msg += f" - Val Loss: {val_loss:.4f}"
-            if isinstance(epoch_iter, tqdm):
-                epoch_iter.set_postfix_str(msg)
-            else:
-                print(msg)
-
-    return model, history
+    )
+    
+    # Call the full training function without checkpointing
+    return _train_model_internal(
+        model=model,
+        train_data=train_data,
+        config=config,
+        checkpoint_dir=None,  # No checkpointing
+        val_data=val_data,
+        start_epoch=0,
+        optimizer=None,
+        checkpoint_every=10,
+        max_checkpoints_to_keep=5,
+        verbose=verbose,
+        use_wandb=use_wandb,
+        log_params_every=log_params_every,
+        log_sparsity_every=log_sparsity_every
+    )
 
 
 @nnx.jit
@@ -1044,7 +1035,9 @@ def checkpoint_model(
     optimizer: nnx.Optimizer,
     epoch: int,
     checkpoint_dir: str,
-    max_to_keep: int = 3
+    checkpointer: ocp.StandardCheckpointer,
+    max_to_keep: int = 3,
+    final: bool = False
 ):
     """
     Save checkpoint including optimizer state using Orbax.
@@ -1054,7 +1047,9 @@ def checkpoint_model(
         optimizer: NNX optimizer
         epoch: Current epoch
         checkpoint_dir: Directory to save checkpoints
+        checkpointer: Persistent StandardCheckpointer instance for async saving
         max_to_keep: Maximum number of checkpoints to keep (default: 3)
+        final: Whether this is the final checkpoint (default: False)
     """
     # Convert epoch to int if it's a JAX array
     if hasattr(epoch, 'item'):
@@ -1071,11 +1066,11 @@ def checkpoint_model(
     _, opt_state = nnx.split(optimizer)
 
     # Create epoch-specific checkpoint directory
-    epoch_dir = ckpt_path / f"epoch_{epoch:04d}"
+    if final:
+        epoch_dir = ckpt_path / f"final"
+    else:
+        epoch_dir = ckpt_path / f"epoch_{epoch:04d}"
     epoch_dir.mkdir(exist_ok=True)
-
-    # Use Orbax StandardCheckpointer
-    checkpointer = ocp.StandardCheckpointer()
 
     # Save checkpoint components - bundle everything in a dict to avoid scalar issues
     checkpoint_data = {
@@ -1251,15 +1246,15 @@ def get_latest_checkpoint_epoch(checkpoint_dir: str) -> Optional[int]:
     return epochs[-1] if epochs else None
 
 
-def train_model_with_checkpointing(
+def _train_model_internal(
     model: TiDHy,
     train_data: jax.Array,
     config,
-    checkpoint_dir: str,
+    checkpoint_dir: Optional[str],
     val_data: Optional[jax.Array] = None,
     start_epoch: int = 0,
     optimizer: Optional[nnx.Optimizer] = None,
-    checkpoint_every: int = 10,
+    checkpoint_every: int = 10,  # Deprecated: kept for backward compatibility
     max_checkpoints_to_keep: int = 5,
     verbose: bool = True,
     # Wandb logging parameters
@@ -1268,17 +1263,22 @@ def train_model_with_checkpointing(
     log_sparsity_every: int = 5
 ) -> Tuple[TiDHy, Dict[str, list]]:
     """
-    Train model with automatic checkpointing using Orbax.
+    Internal training function with optional checkpointing.
+    
+    Checkpoints are saved only when the validation loss decreases (if checkpoint_dir provided),
+    ensuring that only the best models are saved. A final checkpoint is also saved at
+    the end of training.
 
     Args:
         model: TiDHy model instance
         train_data: Training data of shape (n_samples, T, input_dim)
         config: Configuration object with config.model and config.train sections
-        checkpoint_dir: Directory to save checkpoints
-        val_data: Optional validation data
+        checkpoint_dir: Directory to save checkpoints (None to disable checkpointing)
+        val_data: Optional validation data (required for best-model checkpointing)
         start_epoch: Starting epoch (for resuming training)
         optimizer: Pre-created optimizer (for resuming training)
-        checkpoint_every: Save checkpoint every N epochs
+        checkpoint_every: (Deprecated) No longer used - checkpoints saved on val loss improvement
+        max_checkpoints_to_keep: Maximum number of checkpoints to keep (default: 5)
         max_checkpoints_to_keep: Maximum number of checkpoints to keep
         verbose: Whether to print progress
         use_wandb: Whether to log to Weights & Biases (expects existing session)
@@ -1332,6 +1332,13 @@ def train_model_with_checkpointing(
             optimizer_tx = create_optimizer(default_lr, weight_decay)
             optimizer = nnx.Optimizer(model=model, tx=optimizer_tx, wrt=nnx.Param)
 
+    # Create persistent checkpointer for saving model checkpoints (if needed)
+    checkpointer = ocp.StandardCheckpointer() if checkpoint_dir is not None else None
+    
+    # Warn if no validation data provided when checkpointing is enabled
+    if checkpoint_dir is not None and val_data is None and verbose:
+        print("Warning: No validation data provided. Only final checkpoint will be saved.")
+
     # History
     history = {
         'loss': [],
@@ -1343,6 +1350,11 @@ def train_model_with_checkpointing(
 
     if val_data is not None:
         history['val_loss'] = []
+
+    # Track best validation loss for checkpointing and display
+    best_val_loss = float('inf')
+    best_epoch = -1
+    current_val_loss = None  # Track current validation loss for display
 
     # Check if wandb is available for logging
     wandb_available = use_wandb and wandb.run is not None
@@ -1370,11 +1382,10 @@ def train_model_with_checkpointing(
             )
 
         # Validation - only run every N epochs
-        val_loss = None
         if val_data is not None and (epoch + 1) % val_every_n_epochs == 0:
             val_metrics = evaluate_batch(model, val_data, include_sparsity=True)
-            val_loss = float(val_metrics['loss'])
-            history['val_loss'].append(val_loss)
+            current_val_loss = float(val_metrics['loss'])
+            history['val_loss'].append(current_val_loss)
             
             # Log validation metrics to wandb
             if wandb_available:
@@ -1384,6 +1395,31 @@ def train_model_with_checkpointing(
                     prefix="val",
                     log_sparsity=True
                 )
+            
+            # Save checkpoint if validation loss improved (and checkpointing enabled)
+            if current_val_loss < best_val_loss:
+                best_val_loss = current_val_loss
+                best_epoch = epoch + 1
+                
+                if checkpoint_dir is not None:
+                    if verbose:
+                        print(f"\nValidation loss improved to {current_val_loss:.6f}. Saving checkpoint...")
+                    
+                    checkpoint_model(
+                        model=model,
+                        optimizer=optimizer,
+                        epoch=epoch + 1,
+                        checkpoint_dir=checkpoint_dir,
+                        checkpointer=checkpointer,
+                        max_to_keep=max_checkpoints_to_keep
+                    )
+                
+                # Also log to wandb if available
+                if wandb_available:
+                    wandb.log({
+                        'best_val_loss': best_val_loss,
+                        'best_epoch': best_epoch
+                    }, step=epoch)
 
         # Log model parameters periodically
         if wandb_available and (epoch + 1) % log_params_every == 0:
@@ -1414,30 +1450,92 @@ def train_model_with_checkpointing(
         # Print progress
         if verbose:
             msg = f"Epoch {epoch + 1}/{n_epochs} - Loss: {metrics['loss']:.4f}"
-            if val_loss is not None:
-                msg += f" - Val Loss: {val_loss:.4f}"
+            if current_val_loss is not None:
+                msg += f" - Val Loss: {current_val_loss:.4f}"
+                if best_epoch == epoch + 1:
+                    msg += " (✓ best)"
             if isinstance(epoch_iter, tqdm):
                 epoch_iter.set_postfix_str(msg)
             else:
                 print(msg)
 
-        # Save checkpoint periodically
-        if (epoch + 1) % checkpoint_every == 0:
-            checkpoint_model(
-                model=model,
-                optimizer=optimizer,
-                epoch=epoch + 1,
-                checkpoint_dir=checkpoint_dir,
-                max_to_keep=max_checkpoints_to_keep
-            )
+    # Save final checkpoint (if checkpointing enabled)
+    if checkpoint_dir is not None:
+        if verbose:
+            if val_data is not None:
+                print(f"\nTraining complete. Best validation loss: {best_val_loss:.6f} at epoch {best_epoch}")
+            else:
+                print(f"\nTraining complete.")
+        
+        checkpoint_model(
+            model=model,
+            optimizer=optimizer,
+            epoch=n_epochs,
+            checkpoint_dir=checkpoint_dir,
+            checkpointer=checkpointer,
+            max_to_keep=max_checkpoints_to_keep,
+            final=True
+        )
 
-    # Save final checkpoint
-    checkpoint_model(
-        model=model,
-        optimizer=optimizer,
-        epoch=n_epochs,
-        checkpoint_dir=checkpoint_dir,
-        max_to_keep=max_checkpoints_to_keep
-    )
+        # Wait for all async checkpoint operations to complete before returning
+        checkpointer.wait_until_finished()
+    elif verbose and val_data is not None:
+        print(f"\nTraining complete. Best validation loss: {best_val_loss:.6f} at epoch {best_epoch}")
 
     return model, history
+
+
+def train_model_with_checkpointing(
+    model: TiDHy,
+    train_data: jax.Array,
+    config,
+    checkpoint_dir: str,
+    val_data: Optional[jax.Array] = None,
+    start_epoch: int = 0,
+    optimizer: Optional[nnx.Optimizer] = None,
+    checkpoint_every: int = 10,
+    max_checkpoints_to_keep: int = 5,
+    verbose: bool = True,
+    use_wandb: bool = True,
+    log_params_every: int = 10,
+    log_sparsity_every: int = 5
+) -> Tuple[TiDHy, Dict[str, list]]:
+    """
+    Train model with automatic checkpointing when validation loss improves.
+    
+    This is a convenience wrapper around _train_model_internal with checkpointing enabled.
+    Checkpoints are saved only when the validation loss decreases.
+
+    Args:
+        model: TiDHy model instance
+        train_data: Training data of shape (n_samples, T, input_dim)
+        config: Configuration object with config.model and config.train sections
+        checkpoint_dir: Directory to save checkpoints
+        val_data: Optional validation data (required for best-model checkpointing)
+        start_epoch: Starting epoch (for resuming training)
+        optimizer: Pre-created optimizer (for resuming training)
+        checkpoint_every: (Deprecated) No longer used
+        max_checkpoints_to_keep: Maximum number of checkpoints to keep
+        verbose: Whether to print progress
+        use_wandb: Whether to log to Weights & Biases
+        log_params_every: Log model parameters every N epochs
+        log_sparsity_every: Log sparsity analysis every N epochs
+
+    Returns:
+        Tuple of (trained model, history dictionary)
+    """
+    return _train_model_internal(
+        model=model,
+        train_data=train_data,
+        config=config,
+        checkpoint_dir=checkpoint_dir,
+        val_data=val_data,
+        start_epoch=start_epoch,
+        optimizer=optimizer,
+        checkpoint_every=checkpoint_every,
+        max_checkpoints_to_keep=max_checkpoints_to_keep,
+        verbose=verbose,
+        use_wandb=use_wandb,
+        log_params_every=log_params_every,
+        log_sparsity_every=log_sparsity_every
+    )

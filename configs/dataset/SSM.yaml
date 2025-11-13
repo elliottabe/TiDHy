@@ -1,8 +1,8 @@
 # @package _global_
 
-defaults:
-  - model/default_model@model
-  - _self_
+# defaults:
+#   # - model/default_model@model
+#   - _self_
 
 dataset:
   name: SSM
@@ -12,13 +12,13 @@ dataset:
     n_disc_states: 2
     latent_dim: 2
     obs_dim: 3
-    random_projection: true
+    random_projection: false
     rand_dim: 20
-    partial_sup: true
+    partial_sup: false
     full_sup: false
     overlap: 2
-    normalize: true
-    seed: 10
+    normalize: false
+    seed: 42
     time_bins_train: 200000
     time_bins_test: 50000
     timescales: [.1,1,10,100,1000,.5]
@@ -33,7 +33,7 @@ train:
   num_epochs: 1000
   sequence_length: 200
   overlap_factor: 10
-  stack_inputs: true
+  stack_inputs: false
   num_workers: 6
   save_summary_steps: 5
   show_progress: true

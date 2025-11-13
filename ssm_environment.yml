@@ -1,0 +1,50 @@
+name: ssm
+channels:
+  - conda-forge
+  - nvidia
+dependencies:
+  # Python
+  - python=3.11
+
+  # Core scientific computing (conda for C/Fortran extensions)
+  - numpy>=1.24.0
+  - scipy>=1.10.0
+  - scikit-learn>=1.3.0
+
+  # Visualization
+  - matplotlib>=3.7.0
+  - pillow>=10.0.0
+
+  # Data I/O (conda for binary compatibility)
+  - h5py>=3.8.0
+  - pyyaml>=6.0
+
+  # Numerical libraries with C extensions
+  - cython>=3.0.0
+  - numba>=0.58.0
+
+  # Package management
+  - pip
+  - uv
+
+# ============================================================================
+# UV PIP INSTALL (faster than pip)
+# ============================================================================
+# After creating the environment, install Python packages with uv:
+#
+#   conda activate ssm
+#   bash install_ssm_packages.sh
+#
+# Or manually:
+#   uv pip install --find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html \
+#     'jax[cuda12]>=0.4.20' 'jaxlib>=0.4.20' 'optax>=0.2.0' 'chex>=0.1.8' \
+#     'jaxtyping>=0.3.0' 'dm-tree>=0.1.8' \
+#     'git+https://github.com/lindermanlab/ssm@main' \
+#     'dynamax>=1.0.0' 'tensorflow-probability>=0.24.0' \
+#     'hydra-core>=1.3.0' 'omegaconf>=2.3.0' \
+#     'tensorboardX>=2.6.0' 'wandb' \
+#     'dm-env>=1.6' 'gym-notices>=0.0.8' \
+#     'PyOpenGL>=3.1.7' 'pytinyrenderer>=0.0.14' 'trimesh>=4.4.0' \
+#     'autograd>=1.7.0' 'cloudpickle>=3.0.0' 'ml-collections>=0.1.1' \
+#     'fastprogress>=1.0.0' 'rich>=13.0.0' 'tqdm>=4.65.0' 'natsort' 'click>=8.1.0'
+# ============================================================================

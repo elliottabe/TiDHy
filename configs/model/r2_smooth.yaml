@@ -1,0 +1,61 @@
+##### Model dimensions (required) #####
+r_dim: ${resolve_default:16,${r_dim}}
+r2_dim: ${resolve_default:8,${r2_dim}}
+mix_dim: ${resolve_default:8,${mix_dim}}
+input_dim: 6
+hyper_hid_dim: 32
+
+##### Architecture options #####
+loss_type: MSE
+nonlin_decoder: false
+
+##### Learning rates (for inference) #####
+lr_r: 7.5e-3
+lr_r2: 7.5e-3
+
+lr_weights_inf: 0.005
+temp_weight: 2.0
+spat_weight: 0.5
+
+##### Regularization #####
+lmda_r: 0.0
+lmda_r2: 0.0
+weight_decay: 0.00001
+L1_alpha: ${resolve_default:0.0,${L1_alpha}}
+L1_inf_w: 0.0
+L1_inf_r2: 0.0
+L1_inf_r: 0.0
+L1_alpha_inf: ${resolve_default:0.0,${L1_alpha_inf}}
+L1_alpha_r2: 0.0
+grad_alpha_inf: 1.0
+clip_grad: 500.0
+grad_norm_inf: false
+
+# Smooth contextual state configuration
+# Strong temporal smoothness penalties encourage r2 to evolve slowly
+# Low/no sparsity allows r2 to be a continuous, high-dimensional representation
+r2_temporal_smoothness_inf: 0.1     # Strong smoothness during inference
+r2_temporal_smoothness_train: 0.01  # Moderate smoothness during training
+r2_continuity_weight: 0.05          # Cross-window continuity
+sparsity_r2_l1: 0.0                 # No sparsity penalty (allow dense representation)
+sparsity_r2_adaptive: 0.0           # No adaptive sparsity
+sparsity_w_safe: 0.02               # Keep safe hypernetwork regularization
+w_min_active_ratio: 0.25            # Keep 25% of components active
+
+##### Saturation parameters #####
+saturate_r_method: 'none'           # Saturation method for r: 'none', 'sigmoid', 'tanh', 'scaled_tanh'
+saturate_r2_method: 'scaled_tanh'  # Saturation method for r2: 'none', 'sigmoid', 'tanh', 'scaled_tanh'
+saturate_r_scale: 5.0               # Scale for scaled_tanh saturation of r
+saturate_r2_scale: 3.0              # Scale for scaled_tanh saturation of r2
+
+##### Training params #####
+max_iter: 1000
+tol: 0.01
+normalize_spatial: false
+normalize_temporal: false
+learning_rate_gamma: 0.5
+cos_eta: 5.0
+
+##### Display #####
+show_progress: true
+show_inf_progress: false

@@ -1,9 +1,5 @@
 # @package _global_
 
-defaults:
-  - model/sparsity@model
-  - _self_
-
 dataset:
   name: Rossler
   version: HierarchicalMultiTimescale
@@ -35,7 +31,7 @@ dataset:
     # Observation parameters
     # State ordering: [xs, ys, zs, xf, yf, zf] = [0, 1, 2, 3, 4, 5]
     # Default: observe [xf, yf, zs] = [3, 4, 2] (fast x,y + slow z)
-    observed_states: [3, 4, 2]
+    observed_states: [0,1,2,3,4,5]
     rand_proj: true  # Use random projection for observations
     rand_proj_dim: 8  # Dim of random projection if used
     # Data processing
@@ -43,37 +39,40 @@ dataset:
     normalize: true
     seed: 42
 
-model:
-  # Override specific parameters for Rossler dataset
-  grad_norm_inf: false
-  grad_alpha_inf: 1.0
-  cos_eta: 5.0
-  # Regularization parameters
-  L1_alpha: ${resolve_default:0.0,${L1_alpha}}
-  L1_alpha_inf: ${resolve_default:0.0,${L1_alpha_inf}}
-  L1_alpha_r2: 0.0
-  L1_inf_r2: 0.0
-  L1_inf_w: 0.0
-  L1_inf_r: 0.0
-  lmda_r: 0.0
-  lmda_r2: 0.0
-  # Combined sparsity regularization settings
-  sparsity_r_l1: 0.005          # Mild L1 for r
-  sparsity_r2_adaptive: 0.008   # Adaptive for precise r2 control (reduced from 0.015 for stability)
-  sparsity_w_safe: 0.008        # SAFE hypernetwork sparsity
-  target_sparsity_r2: 0.8
-  sparsity_temperature: 1.5     # Temperature for adaptive sparsity (reduced from 1.5 to prevent loss spikes)
-  w_min_active_ratio: 0.3
-  weight_decay: 0.00001
+# model:
+#   # Override specific parameters for Rossler dataset
+#   grad_norm_inf: false
+#   grad_alpha_inf: 1.0
+#   cos_eta: 5.0
+#   # Regularization parameters
+#   L1_alpha: ${resolve_default:0.0,${L1_alpha}}
+#   L1_alpha_inf: ${resolve_default:0.0,${L1_alpha_inf}}
+#   L1_alpha_r2: 0.0
+#   L1_inf_r2: 0.0
+#   L1_inf_w: 0.0
+#   L1_inf_r: 0.0
+#   lmda_r: 0.0
+#   lmda_r2: 0.0
+#   # Combined sparsity regularization settings
+#   sparsity_r_l1: 0.01          # Mild L1 for r
+#   sparsity_r2_adaptive: 0.0     # DISABLED - was causing exponential loss growth when model overshoots target sparsity
+#   sparsity_r2_l1: 0.005         # Static L1 regularization for r2 (safer than adaptive)
+#   sparsity_w_safe: 0.008        # SAFE hypernetwork sparsity
+#   target_sparsity_r2: 0.85
+#   sparsity_temperature: 1.5     # Temperature for adaptive sparsity (reduced from 1.5 to prevent loss spikes)
+#   w_min_active_ratio: 1.0
+#   weight_decay: 0.0001
+#   # Training continuity (cross-window overlap)
+#   r2_continuity_weight: 0.05    # Enforce r2 continuity in overlapping regions during training (reduced from 0.2 to prevent conflicts with sparsity)
 
 
 train:
   wandb_project: "TiDHy_eabe"
-  num_epochs: 80
+  num_epochs: 500
   sequence_length: 200
   overlap_factor: 10
   stack_inputs: true
-  save_summary_steps: 10
+  save_summary_steps: 50
   show_progress: true
   show_inf_progress: false
   test: false
@@ -82,11 +81,11 @@ train:
   ##### Learning rates for different components #####
   # Multi-LR training
   use_schedule: true  # Enable learning rate scheduling
-  schedule_transition_steps: 20  # Steps before applying decay (increased from 100 for smoother training)
-  schedule_decay: 0.96  # Learning rate decay factor
-  learning_rate_s: 0.01  # Spatial decoder learning rate (reduced from 0.005 to prevent NaN)
-  learning_rate_t: 0.01  # Temporal parameters learning rate (reduced from 0.005 to prevent NaN)
-  learning_rate_h: 0.001  # Hypernetwork learning rate (reduced from 0.001 to prevent NaN)
+  schedule_transition_steps: 200  # Steps before applying decay
+  schedule_decay: 0.96  # Learning rate decay factor (increased from 0.99 for faster decay)
+  learning_rate_s: 0.002  # Spatial decoder learning rate (reduced from 0.01)
+  learning_rate_t: 0.002  # Temporal parameters learning rate (reduced from 0.01)
+  learning_rate_h: 0.0005  # Hypernetwork learning rate (reduced from 0.001) 
   # Single LR fallback (if multi-LR not specified)
   learning_rate: 1e-3
   lr_weights: 0.01  # GradNorm settings

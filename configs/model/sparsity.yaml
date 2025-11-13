@@ -1,7 +1,7 @@
 ##### Model dimensions (required) #####
-r_dim: ${resolve_default:10,${r_dim}}
-r2_dim: ${resolve_default:5,${r2_dim}}
-mix_dim: ${resolve_default:15,${mix_dim}}
+r_dim: ${resolve_default:16,${r_dim}}
+r2_dim: ${resolve_default:16,${r2_dim}}
+mix_dim: ${resolve_default:8,${mix_dim}}
 input_dim: 6
 hyper_hid_dim: 32
 
@@ -30,17 +30,23 @@ L1_alpha_r2: 0.0
 grad_alpha_inf: 1.0
 grad_norm_inf: false
 # Combined sparsity regularization settings
-sparsity_r_l1: 0.005          # Mild L1 for r
-sparsity_r2_adaptive: 0.015   # Adaptive for precise r2 control  
-sparsity_w_safe: 0.008        # SAFE hypernetwork sparsity
-target_sparsity_r2: 0.8
-sparsity_temperature: 1.5
-w_min_active_ratio: 0.3
+sparsity_r_adaptive: 0.05
+sparsity_r2_adaptive: 0.08
+sparsity_w_safe: 0.02         # SAFE hypernetwork regularization
+target_sparsity_r: 0.85
+target_sparsity_r2: 0.95
+w_min_active_ratio: 0.25      # Keep 25% of components active
+sparsity_temperature: 3.0
+
+##### Saturation parameters #####
+saturate_r_method: 'none'     # Saturation method for r: 'none', 'sigmoid', 'tanh', 'scaled_tanh'
+saturate_r2_method: 'none'    # Saturation method for r2: 'none', 'sigmoid', 'tanh', 'scaled_tanh'
+saturate_r_scale: 5.0         # Scale for scaled_tanh saturation of r
+saturate_r2_scale: 3.0        # Scale for scaled_tanh saturation of r2
 
 ##### Training params #####
 max_iter: 1000
 tol: 0.01
-early_stopping: true  # Enable early stopping in inference (recommended for speed)
 normalize_spatial: false
 normalize_temporal: false
 learning_rate_gamma: 0.5

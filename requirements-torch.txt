@@ -1,9 +1,0 @@
-# Requirements for TiDHy
-torch>=1.9.0
-torchvision>=0.10.0
-tqdm>=4.62.0
-h5py>=3.1.0
-numpy>=1.21.0
-jax>=0.3.0
-jaxlib>=0.3.0
-flax>=0.5.0

@@ -1,7 +1,7 @@
 ##### Model dimensions (required) #####
-r_dim: ${resolve_default:10,${r_dim}}
-r2_dim: ${resolve_default:5,${r2_dim}}
-mix_dim: ${resolve_default:15,${mix_dim}}
+r_dim: ${resolve_default:16,${r_dim}}
+r2_dim: ${resolve_default:8,${r2_dim}}
+mix_dim: ${resolve_default:8,${mix_dim}}
 input_dim: 6
 hyper_hid_dim: 32
 
@@ -28,14 +28,21 @@ L1_inf_r: 0.0
 L1_alpha_inf: ${resolve_default:0.0,${L1_alpha_inf}}
 L1_alpha_r2: 0.0
 grad_alpha_inf: 1.0
-clip_grad: 500.0
+clip_grad: 10.0
 grad_norm_inf: false
+sparsity_w_safe: 0.02         # SAFE hypernetwork regularization
+w_min_active_ratio: 0.25      # Keep 25% of components active
+
+##### Saturation parameters #####
+saturate_r_method: 'none'     # Saturation method for r: 'none', 'sigmoid', 'tanh', 'scaled_tanh'
+saturate_r2_method: 'none'    # Saturation method for r2: 'none', 'sigmoid', 'tanh', 'scaled_tanh'
+saturate_r_scale: 5.0         # Scale for scaled_tanh saturation of r
+saturate_r2_scale: 3.0        # Scale for scaled_tanh saturation of r2
 
 
 ##### Training params #####
 max_iter: 1000
 tol: 0.01
-early_stopping: true  # Enable early stopping in inference (recommended for speed)
 normalize_spatial: false
 normalize_temporal: false
 learning_rate_gamma: 0.5

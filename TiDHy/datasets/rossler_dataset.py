@@ -154,9 +154,6 @@ def hierarchical_rossler_dataset(cfg, params):
     if (cfg.paths.data_dir/filename).exists():
         print(f"Loading existing dataset from {cfg.paths.data_dir/filename}...")
         temp_dict = ioh5.load(cfg.paths.data_dir/filename)
-        obs_train = temp_dict['obs_train']
-        obs_val = temp_dict['obs_val']
-        obs_test = temp_dict['obs_test']
         states_train = temp_dict['states_x_train']
         states_val = temp_dict['states_x_val']
         states_test = temp_dict['states_x_test']
@@ -196,27 +193,27 @@ def hierarchical_rossler_dataset(cfg, params):
             time_bins_test, dt, initial_test, sys_params, transient_steps
         )
 
-        # Select observed states
-        print(f"Selecting observed states: {observed_states}")
-        obs_train = states_train[:, observed_states]
-        obs_val = states_val[:, observed_states]
-        obs_test = states_test[:, observed_states]
-
-        # Add observation noise if specified
-        if noise_level > 0:
-            print(f"Adding observation noise (sigma={noise_level})...")
-            obs_train += np.random.randn(*obs_train.shape) * noise_level
-            obs_val += np.random.randn(*obs_val.shape) * noise_level
-            obs_test += np.random.randn(*obs_test.shape) * noise_level
         # Save generated dataset
         ioh5.save(cfg.paths.data_dir/filename, {
-            'obs_train': obs_train,
-            'obs_val': obs_val,
-            'obs_test': obs_test,
             'states_x_train': states_train,
             'states_x_val': states_val,
             'states_x_test': states_test,
         })
+
+        
+    # Select observed states
+    print(f"Selecting observed states: {observed_states}")
+    obs_train = states_train[:, observed_states]
+    obs_val = states_val[:, observed_states]
+    obs_test = states_test[:, observed_states]
+
+    # Add observation noise if specified
+    if noise_level > 0:
+        print(f"Adding observation noise (sigma={noise_level})...")
+        obs_train += np.random.randn(*obs_train.shape) * noise_level
+        obs_val += np.random.randn(*obs_val.shape) * noise_level
+        obs_test += np.random.randn(*obs_test.shape) * noise_level
+        
     if params.get('rand_proj', False):
         print(f"Applying random projection to dimension {params['rand_proj_dim']}...")
         obs_dim = obs_train.shape[1]

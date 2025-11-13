@@ -1,6 +1,7 @@
 # set default task and default training config based on dataset
 defaults:
   - dataset: SLDS
+  - model: sparsity
   - paths: workstation
   - _self_
 
@@ -30,8 +31,8 @@ hydra:
             - paths
             - version
             - dataset
-            - dataset.train.gpu
             - run_id
+            - model
   run:
     # dir: ${paths.base_dir}/${hydra:job.override_dirname}
     dir: ${paths.base_dir}/run_id=${run_id}
