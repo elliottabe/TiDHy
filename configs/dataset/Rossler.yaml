@@ -68,11 +68,12 @@ dataset:
 
 train:
   wandb_project: "TiDHy_eabe"
+  device_id: null  # null = use all GPUs, int = specific GPU ID
   num_epochs: 500
   sequence_length: 200
   overlap_factor: 10
   stack_inputs: true
-  save_summary_steps: 50
+  validation_cooldown: 25
   show_progress: true
   show_inf_progress: false
   test: false

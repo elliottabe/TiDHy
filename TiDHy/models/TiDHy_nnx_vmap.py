@@ -76,9 +76,10 @@ def apply_saturation(x: jax.Array, method: str = 'none', scale: float = 1.0) -> 
           * Gradients decay more slowly than tanh
           * No exponential operations
 
-        - 'scaled_softsign': scale * x / (1 + |x|/scale)
-          * Softsign with custom output range
+        - 'scaled_softsign': scale * x / (scale + |x|)
+          * Softsign with custom output range [-scale, scale]
           * Very efficient alternative to scaled_tanh
+          * Correctly bounds to ±scale (not ±scale² like the old formula)
 
         - 'hardtanh': clip(x, -scale, scale)
           * Hard clipping, no smooth saturation
@@ -104,7 +105,7 @@ def apply_saturation(x: jax.Array, method: str = 'none', scale: float = 1.0) -> 
     elif method == 'softsign':
         return x / (1.0 + jnp.abs(x))
     elif method == 'scaled_softsign':
-        return scale * x / (1.0 + jnp.abs(x) / scale)
+        return scale * x / (scale + jnp.abs(x))
     elif method == 'hardtanh':
         return jnp.clip(x, -scale, scale)
     else:
@@ -150,7 +151,7 @@ def _make_saturation_fn(method: str, scale: float):
     elif method == 'softsign':
         return lambda x: x / (1.0 + jnp.abs(x))
     elif method == 'scaled_softsign':
-        return lambda x: scale * x / (1.0 + jnp.abs(x) / scale)
+        return lambda x: scale * x / (scale + jnp.abs(x))
     elif method == 'hardtanh':
         return lambda x: jnp.clip(x, -scale, scale)
     else:
@@ -449,12 +450,13 @@ class SpatialDecoder(nnx.Module):
         hyper_hid_dim: int,
         loss_type: str = 'MSE',
         nonlin_decoder: bool = False,
+        scale: float = 5.0,
         *,
         rngs: nnx.Rngs
     ):
         self.loss_type = loss_type
         self.nonlin_decoder = nonlin_decoder
-
+        self.scale = scale
         if loss_type == 'BCE':
             self.dense = nnx.Linear(
                 r_dim, input_dim, use_bias=True,
@@ -500,6 +502,8 @@ class SpatialDecoder(nnx.Module):
             x = self.dense3(x)
             return x
         else:
+            # x = self.scale * nnx.tanh(r / self.scale)
+            # return self.dense(x)
             return self.dense(r)
 
 
@@ -543,12 +547,13 @@ class HyperNetwork(nnx.Module):
         Returns:
             Mixture weights of shape (mix_dim,) or (..., mix_dim)
         """
-        x = self.dense1(r2)
+        x = nnx.tanh(r2)
+        x = self.dense1(x)
         x = self.norm1(x)
         x = nnx.elu(x)
         x = self.dense2(x)
         x = self.dense3(x)
-        return nnx.relu(x)
+        return nnx.softplus(x)
 
 
 class TiDHy(nnx.Module):

@@ -628,7 +628,7 @@ def train_model(
     use_gradnorm: bool = False,
     grad_alpha: float = 1.5,
     verbose: bool = True,
-    val_every_n_epochs: int = 1,
+    validation_cooldown: int = 5,
     # Wandb logging parameters
     use_wandb: bool = False,
     log_params_every: int = 10,
@@ -657,7 +657,7 @@ def train_model(
         use_gradnorm: Whether to use GradNorm for loss balancing
         grad_alpha: GradNorm hyperparameter (default: 1.5)
         verbose: Whether to print progress
-        val_every_n_epochs: Run validation every N epochs
+        validation_cooldown: Minimum epochs between validation runs (default: 5)
         use_wandb: Whether to log to Weights & Biases
         log_params_every: Log model parameters every N epochs
         log_sparsity_every: Log sparsity analysis every N epochs
@@ -680,7 +680,7 @@ def train_model(
             weight_decay=weight_decay,
             grad_norm=use_gradnorm,
             grad_alpha=grad_alpha,
-            save_summary_steps=val_every_n_epochs,
+            validation_cooldown=validation_cooldown,
             use_schedule=use_schedule,
             schedule_transition_steps=schedule_transition_steps,
             schedule_decay=schedule_decay_rate,
@@ -1292,21 +1292,21 @@ def _train_model_internal(
     """
     Internal training function with optional checkpointing.
 
-    Checkpoints are saved only when the validation loss decreases (if checkpoint_dir provided),
-    ensuring that only the best models are saved. A final checkpoint is also saved at
-    the end of training.
+    Validation is triggered when training loss reaches a new minimum AND the cooldown period
+    has elapsed. Checkpoints are saved only when the validation loss decreases, ensuring
+    that only the best models are saved. A final checkpoint is also saved at the end of training.
 
     Args:
         model: TiDHy model instance
         train_data: Training data of shape (n_samples, T, input_dim)
         config: Configuration object with config.model and config.train sections
+                config.train.validation_cooldown controls minimum epochs between validations (default: 5)
         checkpoint_dir: Directory to save checkpoints (None to disable checkpointing)
         val_data: Optional validation data (required for best-model checkpointing)
         start_epoch: Starting epoch (for resuming training)
         optimizer: Pre-created optimizer (for resuming training)
         checkpoint_every: (Deprecated) No longer used - checkpoints saved on val loss improvement
         max_checkpoints_to_keep: Maximum number of checkpoints to keep (default: 5)
-        max_checkpoints_to_keep: Maximum number of checkpoints to keep
         verbose: Whether to print progress
         use_wandb: Whether to log to Weights & Biases (expects existing session)
         log_params_every: Log model parameters every N epochs
@@ -1332,8 +1332,8 @@ def _train_model_internal(
     use_gradnorm = config.train.grad_norm
     grad_alpha = config.train.grad_alpha
 
-    # Validation frequency
-    val_every_n_epochs = config.train.save_summary_steps
+    # Validation cooldown period (minimum epochs between validation runs)
+    validation_cooldown = getattr(config.train, 'validation_cooldown', 5)
 
     # Learning rate schedule settings
     use_schedule = config.train.use_schedule
@@ -1386,10 +1386,12 @@ def _train_model_internal(
     if val_data is not None:
         history["val_loss"] = []
 
-    # Track best validation loss for checkpointing and display
+    # Track best losses for checkpointing and display
+    best_train_loss = float("inf")
     best_val_loss = float("inf")
     best_epoch = -1
     current_val_loss = None  # Track current validation loss for display
+    epochs_since_validation = 0  # Counter for validation cooldown
 
     # Check if wandb is available for logging
     wandb_available = use_wandb and wandb.run is not None
@@ -1416,8 +1418,32 @@ def _train_model_internal(
                 metrics, step=epoch, prefix="train", log_sparsity=True, log_gradnorm=use_gradnorm
             )
 
-        # Validation - only run every N epochs
-        if val_data is not None and (epoch + 1) % val_every_n_epochs == 0:
+        # Track current training loss
+        current_train_loss = float(metrics["loss"])
+
+        # Increment validation cooldown counter
+        epochs_since_validation += 1
+
+        # Validation - run when training loss improves AND cooldown period has passed
+        should_validate = False
+        new_train_minimum = current_train_loss < best_train_loss
+
+        if val_data is not None and new_train_minimum:
+            if epochs_since_validation >= validation_cooldown:
+                should_validate = True
+                # if verbose:
+                #     print(f"\nNew training loss minimum: {current_train_loss:.6f} (prev: {best_train_loss:.6f}). Running validation...")
+            # # else:
+                # if verbose:
+                #     print(f"\nNew training loss minimum: {current_train_loss:.6f}, but cooldown active ({epochs_since_validation}/{validation_cooldown} epochs)")
+
+            # Update best training loss
+            best_train_loss = current_train_loss
+
+        if should_validate:
+            # Reset cooldown counter
+            epochs_since_validation = 0
+
             val_metrics = evaluate_batch(model, val_data, include_sparsity=True)
             current_val_loss = float(val_metrics["loss"])
             history["val_loss"].append(current_val_loss)
@@ -1451,6 +1477,13 @@ def _train_model_internal(
                     wandb.log(
                         {"best_val_loss": best_val_loss, "best_epoch": best_epoch}, step=epoch
                     )
+            else:
+                if verbose:
+                    print(f"Validation loss: {current_val_loss:.6f} (best: {best_val_loss:.6f})")
+
+        # Log best training loss to wandb
+        if wandb_available:
+            wandb.log({"best_train_loss": best_train_loss}, step=epoch)
 
         # Log model parameters periodically
         if wandb_available and (epoch + 1) % log_params_every == 0:

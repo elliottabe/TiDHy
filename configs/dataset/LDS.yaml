@@ -43,11 +43,12 @@ model:
 
 train:
   version: ${resolve_default:0,${version}}
+  device_id: null  # null = use all GPUs, int = specific GPU ID
   num_epochs: 1000
   sequence_length: 200
   overlap_factor: 10
   stack_inputs: true
-  save_summary_steps: 5
+  validation_cooldown: 5
   show_progress: true
   show_inf_progress: false
   test: false

@@ -5,7 +5,6 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["MUJOCO_GL"] = "egl"
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=True"
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # Use GPU 0
 os.environ["JAX_CAPTURED_CONSTANTS_REPORT_FRAMES"] = "-1"
 from pathlib import Path
 
@@ -27,6 +26,7 @@ except AttributeError:
     pass  # Skip if not available in this JAX version
 
 import logging
+import contextlib
 from typing import Optional, Tuple, Dict
 
 # Third-party imports
@@ -49,6 +49,54 @@ from TiDHy.models.TiDHy_nnx_vmap_training import (
 )
 from TiDHy.utils.path_utils import convert_dict_to_path, convert_dict_to_string
 import TiDHy.utils.io_dict_to_hdf5 as ioh5
+
+
+def setup_device(cfg: DictConfig) -> Optional[jax.Device]:
+    """
+    Configure GPU/device selection programmatically using JAX.
+
+    This function uses JAX's programmatic device selection, which works reliably
+    on clusters without needing to set CUDA_VISIBLE_DEVICES before import.
+
+    Args:
+        cfg: Configuration object with train.device_id parameter
+            - If device_id is None/null: Use default device (typically GPU 0)
+            - If device_id is an integer: Use that specific GPU ID
+
+    Returns:
+        The selected JAX device, or None to use JAX's default device
+    """
+    try:
+        all_devices = jax.devices()
+        logging.info(f"JAX detected devices: {all_devices}")
+
+        if hasattr(cfg.train, "device_id") and cfg.train.device_id is not None:
+            device_id = int(cfg.train.device_id)
+
+            # Get GPU devices only
+            gpu_devices = [d for d in all_devices if d.platform == "gpu"]
+
+            if not gpu_devices:
+                logging.warning("No GPU devices found. Falling back to default device.")
+                return None
+
+            if device_id >= len(gpu_devices):
+                logging.warning(
+                    f"Requested GPU {device_id} but only {len(gpu_devices)} GPUs available. "
+                    f"Using GPU {len(gpu_devices) - 1} instead."
+                )
+                device_id = len(gpu_devices) - 1
+
+            selected_device = gpu_devices[device_id]
+            logging.info(f"GPU selection: Using {selected_device}")
+            return selected_device
+        else:
+            logging.info("GPU selection: Using JAX default device (no device_id specified)")
+            return None
+
+    except Exception as e:
+        logging.warning(f"Could not configure device: {e}. Using JAX default.")
+        return None
 
 
 def setup_config_and_paths(cfg: DictConfig) -> Tuple[DictConfig, str]:
@@ -217,106 +265,115 @@ def main(cfg: DictConfig) -> None:
     cfg, run_id = setup_config_and_paths(cfg)
     logging.info(f"Starting run: {run_id}")
 
-    # ===== 2. Load and Prepare Data =====
+    # ===== 2. Setup Device/GPU Selection =====
+    selected_device = setup_device(cfg)
+
+    # ===== 3. Load and Prepare Data =====
     logging.info("Loading and preparing data...")
     train_inputs, val_inputs, input_dim = prepare_data(cfg)
     cfg.model.input_dim = input_dim
 
-    # ===== 3. Create Model =====
-    logging.info("Creating TiDHy model...")
-    rngs = nnx.Rngs(cfg.seed)
-    model_params = OmegaConf.to_container(cfg.model, resolve=True)
-    model_params["input_dim"] = input_dim
-    model = TiDHy(**model_params, rngs=rngs)
-    logging.info("Model created successfully")
-
-    # ===== 4. Handle Checkpoint Loading =====
-    checkpoint_path = discover_checkpoint(cfg, run_id)
-    loaded_optimizer = None
-    start_epoch = 0
-
-    if checkpoint_path is not None:
-        logging.info(f"Attempting to load checkpoint from: {checkpoint_path}")
-        try:
-            # Create optimizer structure for loading
-            loaded_optimizer = create_optimizer_from_config(cfg, model)
-
-            # Load checkpoint
-            model, loaded_optimizer, start_epoch = load_checkpoint(
-                model, loaded_optimizer, checkpoint_path
-            )
-            logging.info(f"Successfully loaded checkpoint from epoch {start_epoch}")
-
-        except Exception as e:
-            logging.warning(f"Failed to load checkpoint: {e}")
-            logging.info("Continuing with fresh model and optimizer...")
-            loaded_optimizer = None
-            start_epoch = 0
-
-    # ===== 5. Setup Logging =====
-    logging.info("Initializing wandb...")
-    data_info = {
-        "train_shape": train_inputs.shape,
-        "val_shape": val_inputs.shape,
-        "input_dim": input_dim,
-    }
-
-    use_wandb = getattr(cfg.train, "use_wandb", False)
-    if use_wandb:
-        setup_wandb(cfg, run_id, model, data_info)
-
-    # Save configuration
-    temp_cfg = cfg.copy()
-    temp_cfg.paths = convert_dict_to_string(temp_cfg.paths)
-    logging.info(f"Configuration:\n{OmegaConf.to_yaml(temp_cfg)}")
-    OmegaConf.save(temp_cfg, cfg.paths.log_dir / "run_config.yaml")
-
-    # ===== 6. Training =====
-    logging.info("Starting training...")
-    checkpoint_dir = cfg.paths.ckpt_dir
-    checkpoint_dir.mkdir(exist_ok=True)
-
-    trained_model, history = train_model_with_checkpointing(
-        model=model,
-        train_data=train_inputs,
-        config=cfg,
-        val_data=val_inputs,
-        checkpoint_dir=str(checkpoint_dir),
-        start_epoch=start_epoch,
-        optimizer=loaded_optimizer,
-        verbose=True,
-        checkpoint_every=getattr(cfg.train, "save_summary_steps", 1),
-        # Enable wandb logging (wandb already initialized above)
-        use_wandb=use_wandb,
-        log_params_every=getattr(cfg.train, "log_params_every", 10),
-        log_sparsity_every=getattr(cfg.train, "log_sparsity_every", 5),
-    )
-    ioh5.save(str(cfg.paths.log_dir / "training_history.h5"), history)
-    # ===== 7. Final Evaluation =====
-    logging.info("Running final evaluation...")
-    spatial_loss_rhat, spatial_loss_rbar, temp_loss, _ = evaluate_record(
-        trained_model,
-        val_inputs,
-        model.rngs(),
+    # Use context manager to run all computations on selected device
+    # If selected_device is None, this just passes through without changing device
+    device_context = (
+        jax.default_device(selected_device) if selected_device else contextlib.nullcontext()
     )
 
-    final_val_loss = spatial_loss_rhat + spatial_loss_rbar + temp_loss
-    logging.info(f"Final validation loss: {final_val_loss:.4f}")
+    with device_context:
+        # ===== 4. Create Model =====
+        logging.info("Creating TiDHy model...")
+        rngs = nnx.Rngs(cfg.seed)
+        model_params = OmegaConf.to_container(cfg.model, resolve=True)
+        model_params["input_dim"] = input_dim
+        model = TiDHy(**model_params, rngs=rngs)
+        logging.info("Model created successfully")
 
-    # Log final metrics
-    if use_wandb:
-        wandb.log(
-            {
-                "final/val_spatial_loss_rhat": float(spatial_loss_rhat),
-                "final/val_spatial_loss_rbar": float(spatial_loss_rbar),
-                "final/val_temp_loss": float(temp_loss),
-                "final/val_total_loss": float(final_val_loss),
-            }
+        # ===== 5. Handle Checkpoint Loading =====
+        checkpoint_path = discover_checkpoint(cfg, run_id)
+        loaded_optimizer = None
+        start_epoch = 0
+
+        if checkpoint_path is not None:
+            logging.info(f"Attempting to load checkpoint from: {checkpoint_path}")
+            try:
+                # Create optimizer structure for loading
+                loaded_optimizer = create_optimizer_from_config(cfg, model)
+
+                # Load checkpoint
+                model, loaded_optimizer, start_epoch = load_checkpoint(
+                    model, loaded_optimizer, checkpoint_path
+                )
+                logging.info(f"Successfully loaded checkpoint from epoch {start_epoch}")
+
+            except Exception as e:
+                logging.warning(f"Failed to load checkpoint: {e}")
+                logging.info("Continuing with fresh model and optimizer...")
+                loaded_optimizer = None
+                start_epoch = 0
+
+        # ===== 6. Setup Logging =====
+        logging.info("Initializing wandb...")
+        data_info = {
+            "train_shape": train_inputs.shape,
+            "val_shape": val_inputs.shape,
+            "input_dim": input_dim,
+        }
+
+        use_wandb = getattr(cfg.train, "use_wandb", False)
+        if use_wandb:
+            setup_wandb(cfg, run_id, model, data_info)
+
+        # Save configuration
+        temp_cfg = cfg.copy()
+        temp_cfg.paths = convert_dict_to_string(temp_cfg.paths)
+        logging.info(f"Configuration:\n{OmegaConf.to_yaml(temp_cfg)}")
+        OmegaConf.save(temp_cfg, cfg.paths.log_dir / "run_config.yaml")
+
+        # ===== 7. Training =====
+        logging.info("Starting training...")
+        checkpoint_dir = cfg.paths.ckpt_dir
+        checkpoint_dir.mkdir(exist_ok=True)
+
+        trained_model, history = train_model_with_checkpointing(
+            model=model,
+            train_data=train_inputs,
+            config=cfg,
+            val_data=val_inputs,
+            checkpoint_dir=str(checkpoint_dir),
+            start_epoch=start_epoch,
+            optimizer=loaded_optimizer,
+            verbose=True,
+            # Enable wandb logging (wandb already initialized above)
+            use_wandb=use_wandb,
+            log_params_every=getattr(cfg.train, "log_params_every", 10),
+            log_sparsity_every=getattr(cfg.train, "log_sparsity_every", 5),
+        )
+        ioh5.save(str(cfg.paths.log_dir / "training_history.h5"), history)
+        # ===== 8. Final Evaluation =====
+        logging.info("Running final evaluation...")
+        spatial_loss_rhat, spatial_loss_rbar, temp_loss, _ = evaluate_record(
+            trained_model,
+            val_inputs,
+            model.rngs(),
         )
 
-        # ===== 8. Cleanup =====
-        wandb.finish()
-    logging.info("Training completed successfully!")
+        final_val_loss = spatial_loss_rhat + spatial_loss_rbar + temp_loss
+        logging.info(f"Final validation loss: {final_val_loss:.4f}")
+
+        # Log final metrics
+        if use_wandb:
+            wandb.log(
+                {
+                    "final/val_spatial_loss_rhat": float(spatial_loss_rhat),
+                    "final/val_spatial_loss_rbar": float(spatial_loss_rbar),
+                    "final/val_temp_loss": float(temp_loss),
+                    "final/val_total_loss": float(final_val_loss),
+                }
+            )
+
+            # ===== 9. Cleanup =====
+            wandb.finish()
+        logging.info("Training completed successfully!")
 
 
 if __name__ == "__main__":

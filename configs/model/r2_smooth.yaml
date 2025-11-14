@@ -1,7 +1,7 @@
 ##### Model dimensions (required) #####
 r_dim: ${resolve_default:8,${r_dim}}
 r2_dim: ${resolve_default:8,${r2_dim}}
-mix_dim: ${resolve_default:8,${mix_dim}}
+mix_dim: ${resolve_default:16,${mix_dim}}
 input_dim: 6
 hyper_hid_dim: 32
 
@@ -43,8 +43,8 @@ sparsity_w_safe: 0.02               # Keep safe hypernetwork regularization
 w_min_active_ratio: 0.25            # Keep 25% of components active
 
 ##### Saturation parameters #####
-saturate_r_method: 'none'           # Saturation method for r: 'none', 'sigmoid', 'tanh', 'scaled_tanh'
-saturate_r2_method: 'sigmoid'  # Saturation method for r2: 'none', 'sigmoid', 'tanh', 'scaled_tanh'
+saturate_r_method: 'scaled_tanh'           # Saturation method for r: 'none', 'sigmoid', 'tanh', 'scaled_tanh'
+saturate_r2_method: 'none'  # Saturation method for r2: 'none', 'sigmoid', 'tanh', 'scaled_tanh'
 saturate_r_scale: 5.0               # Scale for scaled_tanh saturation of r
 saturate_r2_scale: 3.0              # Scale for scaled_tanh saturation of r2
 
