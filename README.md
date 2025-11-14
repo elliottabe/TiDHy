@@ -14,7 +14,7 @@ bash setup_tidhy_env.sh
 ```
 
 This script will:
-1. Create the conda environment with Python 3.11, RAPIDS 24.12, and CUDA 12.x support
+1. Create the conda environment with Python 3.13, RAPIDS 25.10, and CUDA 12.x support
 2. Install all Python packages using UV (fast dependency resolver)
 3. Install TiDHy as an editable package
 4. Verify the installation and check GPU/CUDA availability
@@ -67,7 +67,13 @@ If you prefer manual setup:
 
 - **Conda/Miniconda**: Required for environment management
 - **CUDA 12.x**: For GPU acceleration (check with `nvidia-smi`)
-- **Python 3.11**: Installed automatically by conda
+- **Python 3.13**: Installed automatically by conda
+
+### Compatibility Notes
+
+- **TensorFlow Probability + JAX 0.8+**: TFP 0.25.0 requires a compatibility patch for JAX 0.8+. The patch is automatically applied in all entry point scripts (`Run_TiDHy_NNX_vmap.py`, etc.) via `TiDHy.utils.tfp_jax_patch.apply_tfp_jax_patch()`. If you import TiDHy modules directly, apply the patch before importing.
+- **JAX**: Version 0.8+ recommended for Python 3.13 support
+- **RAPIDS**: Version 25.10 for latest features and Python 3.13 support
 
 ### Verify Installation
 

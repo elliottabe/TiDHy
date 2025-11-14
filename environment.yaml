@@ -1,16 +1,16 @@
-name: TiDHy
+name: tidhy
 channels:
   - rapidsai
   - conda-forge
   - nvidia
 dependencies:
   # Python
-  - python=3.11
+  - python=3.13
 
   # RAPIDS (GPU-accelerated dataframes/ML)
   # Note: RAPIDS must be installed via conda
-  - rapids=24.12
-  - cuda-version>=12.0,<=12.6
+  - rapids=25.10
+  - cuda-version>=12.0,<=12.9
 
   # Core scientific computing (conda for C/Fortran extensions)
   - numpy>=1.24.0
@@ -50,6 +50,7 @@ dependencies:
 #     'chex>=0.1.8' \
 #     'dynamax>=1.0.0' \
 #     'scikit-learn>=1.3.0' \
+#     'tensorflow-probability>=0.24.0' \
 #     'hydra-core>=1.3.0' \
 #     'omegaconf>=2.3.0' \
 #     'wandb' \

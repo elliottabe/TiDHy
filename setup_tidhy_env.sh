@@ -8,7 +8,7 @@
 
 set -e  # Exit on error
 
-ENV_NAME="TiDHy"
+ENV_NAME="tidhy"
 ENV_FILE="environment.yaml"
 
 echo "========================================================"
@@ -95,6 +95,7 @@ uv pip install \
   'chex>=0.1.8' \
   'dynamax>=1.0.0' \
   'scikit-learn>=1.3.0' \
+  'tensorflow-probability>=0.24.0' \
   'hydra-core>=1.3.0' \
   'omegaconf>=2.3.0' \
   'wandb' \

@@ -1,3 +1,7 @@
+# Apply TFP compatibility patch BEFORE importing JAX-dependent modules
+from TiDHy.utils.tfp_jax_patch import apply_tfp_jax_patch
+apply_tfp_jax_patch()
+
 import numpy as np
 import TiDHy.utils.io_dict_to_hdf5 as ioh5
 import jax.numpy as jnp

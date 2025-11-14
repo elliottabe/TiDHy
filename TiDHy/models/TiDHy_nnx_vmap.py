@@ -53,29 +53,60 @@ def apply_saturation(x: jax.Array, method: str = 'none', scale: float = 1.0) -> 
         method: Saturation method
             - 'none': No saturation (identity)
             - 'sigmoid': Sigmoid saturation (output ∈ [0, 1])
+            - 'shifted_sigmoid': Zero-centered sigmoid (output ∈ [-1, 1])
             - 'tanh': Tanh saturation (output ∈ [-1, 1])
             - 'scaled_tanh': Scaled tanh (output ∈ [-scale, scale])
-        scale: Scale factor for scaled_tanh method
+            - 'softsign': Softsign saturation (output ∈ [-1, 1])
+            - 'scaled_softsign': Scaled softsign (output ∈ [-scale, scale])
+            - 'hardtanh': Hard clipping (output ∈ [-scale, scale])
+        scale: Scale factor for scaled methods
 
     Returns:
         Saturated values
 
     Notes:
-        - 'scaled_tanh' has better gradient properties than 'sigmoid':
+        - 'shifted_sigmoid': 2*sigmoid(x) - 1
+          * Zero-centered like tanh
+          * May be faster than tanh in nested loops
+          * Gradient at 0: 0.5 (better than sigmoid's 0.25)
+
+        - 'softsign': x / (1 + |x|)
+          * Zero-centered, computationally cheap
+          * Gradient at 0: 1.0 (same as tanh)
+          * Gradients decay more slowly than tanh
+          * No exponential operations
+
+        - 'scaled_softsign': scale * x / (1 + |x|/scale)
+          * Softsign with custom output range
+          * Very efficient alternative to scaled_tanh
+
+        - 'hardtanh': clip(x, -scale, scale)
+          * Hard clipping, no smooth saturation
+          * Fastest option (just comparison operations)
+          * Non-zero gradients everywhere except at bounds
+          * No gradient vanishing in linear region
+
+        - 'scaled_tanh' has best gradient properties but may be slow:
           * tanh'(0) = 1 vs sigmoid'(0) = 0.25
           * Symmetric around 0 (no bias)
           * Gradients vanish more slowly: tanh'(x) > 0.1 for |x| < 2
-        - 'scaled_tanh' formula: scale * tanh(x / scale)
-          This ensures smooth saturation with output range [-scale, scale]
     """
     if method == 'none':
         return x
     elif method == 'sigmoid':
         return jax.nn.sigmoid(x)
+    elif method == 'shifted_sigmoid':
+        return 2.0 * jax.nn.sigmoid(x) - 1.0
     elif method == 'tanh':
         return jax.nn.tanh(x)
     elif method == 'scaled_tanh':
         return scale * jax.nn.tanh(x / scale)
+    elif method == 'softsign':
+        return x / (1.0 + jnp.abs(x))
+    elif method == 'scaled_softsign':
+        return scale * x / (1.0 + jnp.abs(x) / scale)
+    elif method == 'hardtanh':
+        return jnp.clip(x, -scale, scale)
     else:
         raise ValueError(f"Unknown saturation method: {method}")
 
@@ -92,15 +123,16 @@ def _make_saturation_fn(method: str, scale: float):
     JIT-compiled loops provides 5-20x speedup by eliminating string comparisons.
 
     Args:
-        method: Saturation method ('none', 'sigmoid', 'tanh', 'scaled_tanh')
-        scale: Scale factor for scaled_tanh
+        method: Saturation method ('none', 'sigmoid', 'shifted_sigmoid', 'tanh',
+                'scaled_tanh', 'softsign', 'scaled_softsign', 'hardtanh')
+        scale: Scale factor for scaled methods
 
     Returns:
         Specialized saturation function with signature (x: Array) -> Array
 
     Example:
         # At initialization:
-        saturate_fn = _make_saturation_fn('scaled_tanh', 3.0)
+        saturate_fn = _make_saturation_fn('scaled_softsign', 3.0)
 
         # In hot loop (JIT-compiled):
         x_saturated = saturate_fn(x)  # Fast! No string comparison
@@ -108,14 +140,19 @@ def _make_saturation_fn(method: str, scale: float):
     if method == 'none':
         return lambda x: x
     elif method == 'sigmoid':
-        # Wrap in lambda for consistent JIT compilation (same as other methods)
         return lambda x: jax.nn.sigmoid(x)
+    elif method == 'shifted_sigmoid':
+        return lambda x: 2.0 * jax.nn.sigmoid(x) - 1.0
     elif method == 'tanh':
-        # Wrap in lambda for consistent JIT compilation (same as other methods)
         return lambda x: jax.nn.tanh(x)
     elif method == 'scaled_tanh':
-        # Capture scale in closure
         return lambda x: scale * jax.nn.tanh(x / scale)
+    elif method == 'softsign':
+        return lambda x: x / (1.0 + jnp.abs(x))
+    elif method == 'scaled_softsign':
+        return lambda x: scale * x / (1.0 + jnp.abs(x) / scale)
+    elif method == 'hardtanh':
+        return lambda x: jnp.clip(x, -scale, scale)
     else:
         raise ValueError(f"Unknown saturation method: {method}")
 
@@ -694,6 +731,15 @@ class TiDHy(nnx.Module):
         self.l0 = None  # Initial losses for GradNorm
         self.iters = 0  # Training iterations counter
 
+        # Profiling stats (enable with profile_inference=True)
+        self.profile_inference = False  # Set to True to collect stats
+        self.inference_stats = {
+            'total_iterations': [],
+            'converged_count': 0,
+            'max_iter_count': 0,
+            'total_timesteps': 0
+        }
+
         # Initialize spatial decoder
         self.spatial_decoder = SpatialDecoder(
             r_dim=r_dim,
@@ -808,7 +854,7 @@ class TiDHy(nnx.Module):
         _, r2 = self.init_code(key_init)
 
         # Infer first code (stop gradients - we only need gradients w.r.t. decoder parameters)
-        r_inferred, r2_inferred = self.inf_first_step(X[0], key_inf)
+        r_inferred, r2_inferred = self.inf_first_step(X[0], key_inf, return_stats=False)
         r = jax.lax.stop_gradient(r_inferred)
         r2 = jax.lax.stop_gradient(r2_inferred)  # Use inferred r2 instead of zeros
 
@@ -831,14 +877,14 @@ class TiDHy(nnx.Module):
         # Define scan step function for time iteration
         def scan_step(carry, x_t):
             """Single timestep: inference, prediction, and loss computation"""
-            r, r2, loss_rhat, loss_rbar, tloss = carry
+            r, r2, loss_rhat, loss_rbar, tloss, inf_stats = carry
 
             # CRITICAL: Detach previous codes to match PyTorch version
             r_p = jax.lax.stop_gradient(r)
             r2_p = jax.lax.stop_gradient(r2)
 
             # === INFERENCE: Find optimal r and r2 ===
-            r_inferred, r2_inferred = self.inf(x_t, r_p, r2_p)
+            r_inferred, r2_inferred, inf_stats_new = self.inf(x_t, r_p, r2_p)
 
             # Stop gradients on inferred codes
             r_inferred_detached = jax.lax.stop_gradient(r_inferred)
@@ -858,18 +904,22 @@ class TiDHy(nnx.Module):
             tloss += jnp.sum((r_inferred_detached - r_bar) ** 2)
 
             # Pass along the inferred codes (detached) for next timestep
-            new_carry = (r_inferred_detached, r2_inferred_detached, loss_rhat, loss_rbar, tloss)
+            new_carry = (r_inferred_detached, r2_inferred_detached, loss_rhat, loss_rbar, tloss, inf_stats_new)
             
             if return_internals:
                 return new_carry, (r_inferred_detached, r2_inferred_detached, w)
             else:
                 return new_carry, None
-
+        init_stats = {
+            'iterations': 0,
+            'converged': False,
+            'max_iter_reached': False
+        }
         # Run scan over timesteps 1 to T
-        init_carry = (r, r2, spatial_loss_rhat, spatial_loss_rbar, temp_loss)
+        init_carry = (r, r2, spatial_loss_rhat, spatial_loss_rbar, temp_loss, init_stats)
         final_carry, scan_outputs = jax.lax.scan(scan_step, init_carry, X[1:])
 
-        r, r2, spatial_loss_rhat, spatial_loss_rbar, temp_loss = final_carry
+        r, r2, spatial_loss_rhat, spatial_loss_rbar, temp_loss, inf_stats = final_carry
 
         losses = (spatial_loss_rhat, spatial_loss_rbar, self.temp_weight * temp_loss)
 
@@ -886,7 +936,7 @@ class TiDHy(nnx.Module):
             r2_array = jnp.stack(r2_values)  # Shape: (T, r2_dim)
             w_array = jnp.stack(w_values)  # Shape: (T, mix_dim)
             
-            return losses, (r_array, r2_array, w_array)
+            return losses, (r_array, r2_array, w_array), inf_stats
 
         return losses
 
@@ -894,8 +944,9 @@ class TiDHy(nnx.Module):
         self,
         x: jax.Array,
         r_p: jax.Array,
-        r2: jax.Array
-    ) -> Tuple[jax.Array, jax.Array]:
+        r2: jax.Array,
+        return_stats: bool = True
+    ) -> Tuple[jax.Array, jax.Array] | Tuple[jax.Array, jax.Array, dict]:
         """
         Inference step: p(r_t, r2_t | x_t, r_t-1, r2_t-1)
 
@@ -903,9 +954,11 @@ class TiDHy(nnx.Module):
             x: Current observation of shape (input_dim,)
             r_p: Previous r of shape (r_dim,)
             r2: Previous r2 of shape (r2_dim,)
+            return_stats: If True, return (r, r2, stats) instead of (r, r2). Default: True
 
         Returns:
             Tuple of (r, r2) with shapes (r_dim,) and (r2_dim,)
+            If return_stats=True, also returns dict with iteration count and convergence flag
         """
         # Initialize r
         r = jnp.zeros(self.r_dim)
@@ -1015,9 +1068,22 @@ class TiDHy(nnx.Module):
                 r2max=jnp.max(jnp.abs(r2))
             )
 
-        return r, r2
+        if return_stats:
+            stats = {
+                'iterations': final_iteration,
+                'converged': final_converged,
+                'max_iter_reached': final_iteration >= self.max_iter
+            }
+            return r, r2, stats
+        else:
+            return r, r2
 
-    def inf_first_step(self, x: jax.Array, key: jax.Array) -> Tuple[jax.Array, jax.Array]:
+    def inf_first_step(
+        self,
+        x: jax.Array,
+        key: jax.Array,
+        return_stats: bool = True
+    ) -> Tuple[jax.Array, jax.Array] | Tuple[jax.Array, jax.Array, dict]:
         """
         First step inference: p(r_1, r2_1 | x_1)
         Now optimizes both r and r2 to give r2 a chance to learn
@@ -1025,10 +1091,12 @@ class TiDHy(nnx.Module):
         Args:
             x: First observation of shape (input_dim,)
             key: JAX random key for initialization
+            return_stats: If True, return (r, r2, stats) instead of (r, r2). Default: True
 
         Returns:
             Tuple of (inferred r, inferred r2) at time 1
             Each has shape (r_dim,) and (r2_dim,)
+            If return_stats=True, also returns dict with iteration count and convergence flag
         """
         r = jnp.zeros(self.r_dim)
         # Initialize r2 with small values to avoid starting from zero
@@ -1126,7 +1194,15 @@ class TiDHy(nnx.Module):
                 r2max=jnp.max(jnp.abs(r2))
             )
 
-        return r, r2
+        if return_stats:
+            stats = {
+                'iterations': final_iteration,
+                'converged': final_converged,
+                'max_iter_reached': final_iteration >= self.max_iter
+            }
+            return r, r2, stats
+        else:
+            return r, r2
 
     def compute_r2_continuity_loss(
         self,
@@ -1278,7 +1354,7 @@ class TiDHy(nnx.Module):
             def compute_w_selective_single(w_seq):
                 return selective_sparsity_regularization(
                     w_seq,
-                    target_active=self.w_target_active,
+                    target_active_ratio=self.w_target_active,
                     temperature=self.sparsity_temperature
                 )
             w_selective = jnp.mean(jax.vmap(compute_w_selective_single)(w_values))

@@ -6,6 +6,10 @@ A simple LSTM baseline for comparison with TiDHy.
 Uses the same data loading, configuration, and logging infrastructure.
 """
 
+# Apply TFP compatibility patch BEFORE importing JAX-dependent modules
+from TiDHy.utils.tfp_jax_patch import apply_tfp_jax_patch
+apply_tfp_jax_patch()
+
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import jax

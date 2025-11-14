@@ -1,5 +1,5 @@
 ##### Model dimensions (required) #####
-r_dim: ${resolve_default:16,${r_dim}}
+r_dim: ${resolve_default:8,${r_dim}}
 r2_dim: ${resolve_default:8,${r2_dim}}
 mix_dim: ${resolve_default:8,${mix_dim}}
 input_dim: 6
@@ -37,7 +37,7 @@ grad_norm_inf: false
 r2_temporal_smoothness_inf: 0.01    # Weak smoothness (allow switches)
 r2_temporal_smoothness_train: 0.0   # No smoothness during training
 r2_continuity_weight: 0.0           # No cross-window continuity
-sparsity_r2_l1: 0.2                 # Strong L1 sparsity penalty
+sparsity_r2_l1: 0.1                 # Strong L1 sparsity penalty
 sparsity_r2_adaptive: 0.05          # Adaptive sparsity to maintain high sparsity
 target_sparsity_r2: 0.90            # Target 90% zeros
 sparsity_temperature: 2.0           # Temperature for adaptive sparsity

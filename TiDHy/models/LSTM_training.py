@@ -104,7 +104,7 @@ def train_step(model: LSTMBaseline,
     (loss, metrics), grads = grad_fn(model)
 
     # Update parameters
-    optimizer.update(grads)
+    optimizer.update(model, grads)
 
     # Add gradient norm to metrics
     grad_norm = optax.global_norm(grads)

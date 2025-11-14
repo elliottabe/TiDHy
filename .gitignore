@@ -136,3 +136,5 @@ Archive/
 tmp/
 
 *.code-workspace
+
+.pylintrc

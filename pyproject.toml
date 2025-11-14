@@ -7,7 +7,7 @@ name = "TiDHy"
 version = "0.1.0"
 description = "Time-Dependent Hybrid Dynamical Systems: Deep learning models for dynamical systems with discrete latent states using JAX/Flax"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 license = {text = "MIT"}
 authors = [
     {name = "Elliott Abe", email = "eabe@example.com"}
@@ -18,7 +18,7 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
@@ -40,6 +40,7 @@ dependencies = [
     # ML/Dynamical Systems
     "dynamax>=1.0.0",
     "scikit-learn>=1.3.0",
+    "tensorflow-probability>=0.24.0",  # Requires tfp_jax_patch for JAX 0.8+
 
     # Configuration management
     "hydra-core>=1.3.0",
@@ -83,7 +84,8 @@ notebooks = [
 # SSM baselines
 ssm = [
     "ssm @ git+https://github.com/lindermanlab/ssm@main",
-    "tensorflow-probability>=0.24.0",
+    # Note: tensorflow-probability has compatibility issues with JAX 0.8+
+    # Install manually if needed: pip install tensorflow-probability==0.24.0 'jax[cuda12]<0.5'
     "autograd>=1.7.0",
 ]
 
@@ -109,7 +111,7 @@ TiDHy = ["py.typed"]
 # Black configuration
 [tool.black]
 line-length = 100
-target-version = ['py311']
+target-version = ['py313']
 include = '\.pyi?$'
 exclude = '''
 /(
@@ -129,7 +131,7 @@ multi_line_output = 3
 
 # mypy configuration
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
@@ -141,3 +143,15 @@ python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
 addopts = "-v --cov=TiDHy --cov-report=term-missing"
+
+# Pyright/Pylance configuration
+[tool.pyright]
+typeCheckingMode = "off"
+reportCallIssue = "none"
+reportUnnecessaryLambda = "none"
+reportGeneralTypeIssues = "none"
+reportReturnType = "none"
+reportArgumentType = "none"
+reportAssignmentType = "none"
+reportAttributeAccessIssue = "none"
+reportPossiblyUnboundVariable = "none"

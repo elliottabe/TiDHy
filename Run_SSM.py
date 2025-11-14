@@ -1,3 +1,7 @@
+# Apply TFP compatibility patch BEFORE importing modules that use dynamax/TFP
+from TiDHy.utils.tfp_jax_patch import apply_tfp_jax_patch
+apply_tfp_jax_patch()
+
 import hydra
 import logging
 import numpy as np

@@ -1,5 +1,5 @@
 ##### Model dimensions (required) #####
-r_dim: ${resolve_default:16,${r_dim}}
+r_dim: ${resolve_default:8,${r_dim}}
 r2_dim: ${resolve_default:8,${r2_dim}}
 mix_dim: ${resolve_default:8,${mix_dim}}
 input_dim: 6
