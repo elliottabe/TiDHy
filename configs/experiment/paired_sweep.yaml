@@ -1,0 +1,40 @@
+# @package _global_
+
+# Experiment configuration for paired parameter sweep
+# This sweeps model.L1_inf_r2 and train.device_id as paired parameters
+# and dataset.rossler_params.rand_proj as a grid parameter
+
+defaults:
+  - override /dataset: Rossler
+  - override /hydra/sweeper: list
+  - override /hydra/launcher: joblib
+
+# Fixed parameters for this experiment
+dataset:
+  rossler_params:
+    rand_proj: false  # Default value, will be overridden by sweep
+
+run_id: Testing_joblib01
+
+# Hydra multirun configuration
+hydra:
+  mode: MULTIRUN
+
+  # List sweeper configuration
+  sweeper:
+    # Paired parameters - these are zipped together
+    # This creates 2 combinations: (0.01, 0) and (0.1, 1)
+    list_params:
+      model.L1_inf_r2: 0.01, 0.1
+      train.device_id: 0, 1
+
+    # Grid parameters - cartesian product with paired params
+    # This creates 2 values: true, false
+    # Combined with 2 paired combinations = 4 total jobs
+    # grid_params:
+    #   dataset.rossler_params.rand_proj: false
+
+  # Joblib launcher for parallel execution
+  launcher:
+    n_jobs: -1  # Use all available cores
+    # n_jobs: 2  # Or set a specific number of parallel jobs

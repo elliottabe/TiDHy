@@ -74,7 +74,7 @@ train:
   overlap_factor: 5
   stack_inputs: true
   validation_cooldown: 25
-  show_progress: true
+  show_progress: false
   show_inf_progress: false
   test: false
   batch_size_input: true

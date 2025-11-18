@@ -4,6 +4,7 @@ defaults:
   - model: sparsity
   - paths: workstation
   - _self_
+  - optional experiment: null  # Optional experiment configs (override everything)
 
 # Dataset name - used to pick the data to load
 dataset_name: ${dataset.name}

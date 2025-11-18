@@ -13,7 +13,6 @@ nonlin_decoder: false
 lr_r: 7.5e-3
 lr_r2: 7.5e-3
 
-lr_weights_inf: 0.005
 temp_weight: 2.0
 spat_weight: 0.5
 
