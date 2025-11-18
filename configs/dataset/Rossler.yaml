@@ -33,7 +33,7 @@ dataset:
     # Default: observe [xf, yf, zs] = [3, 4, 2] (fast x,y + slow z)
     observed_states: [0,1,2,3,4,5]
     rand_proj: true  # Use random projection for observations
-    rand_proj_dim: 8  # Dim of random projection if used
+    rand_proj_dim: 16  # Dim of random projection if used
     # Data processing
     noise_level: 0.1  # Observation noise std dev (0 = no noise)
     normalize: true
@@ -69,9 +69,9 @@ dataset:
 train:
   wandb_project: "TiDHy_eabe"
   device_id: null  # null = use all GPUs, int = specific GPU ID
-  num_epochs: 500
-  sequence_length: 200
-  overlap_factor: 10
+  num_epochs: 1000
+  sequence_length: 500
+  overlap_factor: 5
   stack_inputs: true
   validation_cooldown: 25
   show_progress: true

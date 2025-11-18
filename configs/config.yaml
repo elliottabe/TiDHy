@@ -34,6 +34,9 @@ hydra:
             - run_id
             - model
             - train.device_id
+            - r_dim
+            - r2_dim
+            - mix_dim
   run:
     # dir: ${paths.base_dir}/${hydra:job.override_dirname}
     dir: ${paths.base_dir}/run_id=${run_id}

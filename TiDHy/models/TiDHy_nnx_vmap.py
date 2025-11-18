@@ -25,16 +25,6 @@ def soft_thresholding(r: jax.Array, lmda: float) -> jax.Array:
     return jax.nn.relu(jnp.abs(r) - lmda) * jnp.sign(r)
 
 
-def soft_max(r: jax.Array, axis: int = -1) -> jax.Array:
-    """Softmax activation."""
-    return jax.nn.softmax(r, axis=axis)
-
-
-def heavyside(r: jax.Array, value: jax.Array) -> jax.Array:
-    """Heaviside step function."""
-    return jnp.heaviside(r, value)
-
-
 def poisson_loss(predicted: jax.Array, observed: jax.Array) -> jax.Array:
     """Custom loss function for Poisson model."""
     return predicted - observed * jnp.log(predicted + 1e-10)
@@ -222,57 +212,6 @@ def cos_sim_mat(x: jax.Array, dim: int = -1) -> jax.Array:
 def l1_regularization(x: jax.Array) -> jax.Array:
     """L1 (Lasso) regularization to encourage sparsity."""
     return jnp.sum(jnp.abs(x))
-
-
-def l2_regularization(x: jax.Array) -> jax.Array:
-    """L2 (Ridge) regularization."""
-    return jnp.sum(x ** 2)
-
-
-def elastic_net_regularization(x: jax.Array, l1_ratio: float = 0.5) -> jax.Array:
-    """Elastic net regularization: combination of L1 and L2."""
-    return l1_ratio * l1_regularization(x) + (1 - l1_ratio) * l2_regularization(x)
-
-
-def group_lasso_regularization(x: jax.Array, group_size: int) -> jax.Array:
-    """
-    Group Lasso regularization for structured sparsity.
-    
-    Groups consecutive elements and applies L2 norm within groups,
-    then L1 norm across groups.
-    """
-    # Reshape to groups
-    n_elements = x.size
-    
-    # Handle edge cases
-    if n_elements == 0 or group_size <= 0:
-        return jnp.array(0.0)
-    
-    if group_size >= n_elements:
-        # If group size is larger than array, just return L2 norm
-        return jnp.linalg.norm(x.ravel())
-    
-    n_groups = n_elements // group_size
-    
-    if n_groups == 0:
-        return jnp.linalg.norm(x.ravel())
-    
-    # Flatten and reshape into groups
-    x_flat = x.ravel()
-    remaining = n_elements % group_size
-    
-    if remaining > 0:
-        # Pad with zeros to make divisible by group_size
-        padding = group_size - remaining
-        x_flat = jnp.concatenate([x_flat, jnp.zeros(padding)])
-        n_groups = (n_elements + padding) // group_size
-    
-    # Reshape to (n_groups, group_size)
-    x_grouped = x_flat[:n_groups * group_size].reshape(n_groups, group_size)
-    
-    # L2 norm within each group, then L1 norm across groups
-    group_norms = jnp.linalg.norm(x_grouped, axis=1)
-    return jnp.sum(group_norms)
 
 
 def adaptive_sparsity_regularization(
@@ -553,7 +492,7 @@ class HyperNetwork(nnx.Module):
         x = nnx.elu(x)
         x = self.dense2(x)
         x = self.dense3(x)
-        return nnx.softplus(x)
+        return nnx.relu(x)
 
 
 class TiDHy(nnx.Module):
@@ -579,23 +518,17 @@ class TiDHy(nnx.Module):
         lr_r: float = 0.2,
         lr_r2: float = 0.2,
         lr_weights: float = 0.01,
-        lr_weights_inf: float = 0.005,
         temp_weight: float = 2.0,
-        spat_weight: float = 0.5,
         # Regularization
         lmda_r: float = 0.0,
         lmda_r2: float = 0.0,
         weight_decay: float = 0.0,
-        L1_alpha: float = 0.0,
+        grad_alpha: float = 1.5,
+        clip_grad: float = 1.0,
+        # L1 Inference Penalties
         L1_inf_w: float = 0.0,
         L1_inf_r2: float = 0.0,
         L1_inf_r: float = 0.0,
-        L1_alpha_inf: float = 0.0,
-        L1_alpha_r2: float = 0.0,
-        grad_alpha: float = 1.5,
-        grad_alpha_inf: float = 1.5,
-        clip_grad: float = 1.0,
-        grad_norm_inf: bool = False,
         # Enhanced sparsity regularization
         sparsity_r_l1: float = 0.0,           # L1 regularization on r during training
         sparsity_r2_l1: float = 0.0,          # L1 regularization on r2 during training  
@@ -603,21 +536,18 @@ class TiDHy(nnx.Module):
         sparsity_r_adaptive: float = 0.0,     # Adaptive sparsity for r
         sparsity_r2_adaptive: float = 0.0,    # Adaptive sparsity for r2
         sparsity_w_adaptive: float = 0.0,     # Adaptive sparsity for w
-        sparsity_r_group: float = 0.0,        # Group lasso for r
-        sparsity_r2_group: float = 0.0,       # Group lasso for r2
         sparsity_r_hoyer: float = 0.0,        # Hoyer sparsity for r
         sparsity_r2_hoyer: float = 0.0,       # Hoyer sparsity for r2
         # New hypernetwork-specific regularization (prevents collapse)
         sparsity_w_safe: float = 0.0,         # Safe hypernetwork sparsity (prevents collapse)
         sparsity_w_selective: float = 0.0,    # Selective sparsity (keep only k active components)
+        w_target_active: Optional[int] = None, # Target number of active components for selective sparsity
         target_sparsity_r: float = 0.7,       # Target sparsity level for r (70% zeros)
-        target_sparsity_r2: float = 0.8,      # Target sparsity level for r2 (80% zeros) 
+        target_sparsity_r2: float = 0.8,      # Target sparsity level for r2 (80% zeros)
         target_sparsity_w: float = 0.8,       # Target sparsity level for w (80% zeros)
-        sparsity_group_size: int = 4,         # Group size for group lasso
         sparsity_temperature: float = 1.0,    # Temperature for adaptive sparsity
         # Hypernetwork protection parameters
-        w_min_active_ratio: float = 0.3,      # Minimum fraction of hypernetwork components to keep active
-        w_target_active: int = None,          # Target number of active components (None = mix_dim//2)
+        w_min_active_ratio: float = 0.25,      # Minimum fraction of hypernetwork components to keep active
         # Training continuity (cross-window)
         r2_continuity_weight: float = 0.0,    # Weight for r2 continuity across overlapping windows during training
         # Temporal smoothness regularization for r2
@@ -628,12 +558,14 @@ class TiDHy(nnx.Module):
         saturate_r2_method: str = 'none',          # Saturation method for r2: 'none', 'sigmoid', 'tanh', 'scaled_tanh'
         saturate_r_scale: float = 5.0,             # Scale for scaled_tanh saturation of r
         saturate_r2_scale: float = 3.0,            # Scale for scaled_tanh saturation of r2
+        # Interpretability regularization
+        lambda_decoder_ortho: float = 0.0,         # Weight for decoder orthogonality loss (encourages independent R dimensions)
+        lambda_r_correlation: float = 0.0,         # Weight for R correlation penalty (penalizes correlated R dimensions)
         # Training params
         max_iter: int = 200,
         tol: float = 1e-4,
         normalize_spatial: bool = False,
         normalize_temporal: bool = False,
-        learning_rate_gamma: float = 0.5,
         cos_eta: float = 0.001,
         # Display
         show_progress: bool = True,
@@ -656,23 +588,19 @@ class TiDHy(nnx.Module):
         self.lr_r = lr_r
         self.lr_r2 = lr_r2
         self.lr_weights = lr_weights
-        self.lr_weights_inf = lr_weights_inf
 
         # Regularization
         self.temp_weight = temp_weight
         self.lmda_r = lmda_r
         self.lmda_r2 = lmda_r2
         self.weight_decay = weight_decay
-        self.L1_alpha = L1_alpha
+        self.grad_alpha = grad_alpha
+        self.clip_grad = clip_grad
+
+        # L1 Inference Penalties
         self.L1_inf_w = L1_inf_w
         self.L1_inf_r2 = L1_inf_r2
         self.L1_inf_r = L1_inf_r
-        self.L1_alpha_inf = L1_alpha_inf
-        self.L1_alpha_r2 = L1_alpha_r2
-        self.grad_alpha = grad_alpha
-        self.grad_alpha_inf = grad_alpha_inf
-        self.clip_grad = clip_grad
-        self.grad_norm_inf = grad_norm_inf
         
         # Enhanced sparsity regularization
         self.sparsity_r_l1 = sparsity_r_l1
@@ -681,21 +609,18 @@ class TiDHy(nnx.Module):
         self.sparsity_r_adaptive = sparsity_r_adaptive
         self.sparsity_r2_adaptive = sparsity_r2_adaptive
         self.sparsity_w_adaptive = sparsity_w_adaptive
-        self.sparsity_r_group = sparsity_r_group
-        self.sparsity_r2_group = sparsity_r2_group
         self.sparsity_r_hoyer = sparsity_r_hoyer
         self.sparsity_r2_hoyer = sparsity_r2_hoyer
         # New hypernetwork-specific regularization
         self.sparsity_w_safe = sparsity_w_safe
         self.sparsity_w_selective = sparsity_w_selective
+        self.w_target_active = w_target_active
         self.target_sparsity_r = target_sparsity_r
         self.target_sparsity_r2 = target_sparsity_r2
         self.target_sparsity_w = target_sparsity_w
-        self.sparsity_group_size = sparsity_group_size
         self.sparsity_temperature = sparsity_temperature
         # Hypernetwork protection parameters
         self.w_min_active_ratio = w_min_active_ratio
-        self.w_target_active_ratio = 0.5 if w_target_active is None else float(w_target_active) / max(1, mix_dim)
         # Training continuity
         self.r2_continuity_weight = r2_continuity_weight
         # Temporal smoothness regularization
@@ -711,6 +636,10 @@ class TiDHy(nnx.Module):
         self.saturate_r_fn = _make_saturation_fn(saturate_r_method, saturate_r_scale)
         self.saturate_r2_fn = _make_saturation_fn(saturate_r2_method, saturate_r2_scale)
 
+        # Interpretability regularization
+        self.lambda_decoder_ortho = lambda_decoder_ortho
+        self.lambda_r_correlation = lambda_r_correlation
+
         # Create specialized gradient clipping function (compile-time)
         self.clip_grad_fn = _make_clip_fn(clip_grad)
 
@@ -719,8 +648,6 @@ class TiDHy(nnx.Module):
         self.tol = tol
         self.normalize_spatial = normalize_spatial
         self.normalize_temporal = normalize_temporal
-        self.spat_weight = spat_weight
-        self.learning_rate_gamma = learning_rate_gamma
         self.cos_eta = cos_eta
 
         # Display
@@ -1246,6 +1173,94 @@ class TiDHy(nnx.Module):
         # Average over all dimensions: pairs, timesteps, and features
         return jnp.mean(squared_diffs)
 
+    def compute_decoder_orthogonality_loss(self) -> jax.Array:
+        """
+        Encourage decoder to map independent R dimensions independently.
+
+        Orthogonality in the decoder promotes independent dimensions in R, making each
+        dimension capture distinct features. This improves interpretability by reducing
+        redundancy and entanglement between dimensions.
+
+        We compute the Gram matrix of decoder rows (R dimension mappings) to ensure
+        different R dimensions have orthogonal effects on the output.
+
+        Returns:
+            Orthogonality loss (sum of squared off-diagonal elements in Gram matrix)
+        """
+        # Get decoder weight matrix
+        if self.nonlin_decoder:
+            # For nonlinear decoder, use first layer weights
+            # W shape: (r_dim, hyper_hid_dim)
+            if hasattr(self.spatial_decoder, 'dense1'):
+                W = self.spatial_decoder.dense1.kernel.value
+            else:
+                return jnp.array(0.0)
+        else:
+            # For linear decoder
+            # W shape: (r_dim, input_dim)
+            if hasattr(self.spatial_decoder, 'dense'):
+                W = self.spatial_decoder.dense.kernel.value
+            else:
+                return jnp.array(0.0)
+
+        # W has shape (r_dim, output_dim)
+        # Each row corresponds to how one R dimension affects the output
+        # We want rows to be orthogonal (independent R dimensions)
+
+        # Normalize rows to unit length
+        W_norm = W / (jnp.linalg.norm(W, axis=1, keepdims=True) + 1e-10)
+
+        # Compute Gram matrix (inner products between all row pairs)
+        gram = W_norm @ W_norm.T  # Shape: (r_dim, r_dim)
+
+        # Orthogonal rows → Gram matrix = Identity
+        # Penalize deviation from identity (off-diagonal elements should be 0)
+        off_diagonal = gram - jnp.eye(self.r_dim)
+
+        return jnp.sum(off_diagonal ** 2)
+
+    def compute_r_correlation_penalty(self, r_values: jax.Array) -> jax.Array:
+        """
+        Penalize correlations between R dimensions to encourage statistical independence.
+
+        This directly penalizes correlations in the R latent space, promoting disentanglement
+        where each dimension varies independently. Complements decoder orthogonality by
+        enforcing independence in the representation itself, not just the decoder.
+
+        Args:
+            r_values: R latent values, shape (T, r_dim) or (batch, T, r_dim)
+
+        Returns:
+            Correlation penalty (sum of absolute off-diagonal correlations)
+        """
+        # Flatten to (N, r_dim) where N = total number of samples
+        if r_values.ndim == 3:
+            # (batch, T, r_dim) → (batch*T, r_dim)
+            r_flat = r_values.reshape(-1, r_values.shape[-1])
+        elif r_values.ndim == 2:
+            # (T, r_dim) → already flat
+            r_flat = r_values
+        else:
+            # (r_dim,) → reshape to (1, r_dim)
+            r_flat = r_values.reshape(1, -1)
+
+        # Center each dimension (zero mean)
+        r_centered = r_flat - jnp.mean(r_flat, axis=0, keepdims=True)
+
+        # Compute covariance matrix
+        cov = (r_centered.T @ r_centered) / (r_flat.shape[0] + 1e-10)
+
+        # Normalize to correlation matrix
+        # corr[i,j] = cov[i,j] / (std[i] * std[j])
+        std = jnp.sqrt(jnp.diag(cov) + 1e-10)
+        corr = cov / (std[:, None] * std[None, :] + 1e-10)
+
+        # Penalize off-diagonal elements (correlations between different dimensions)
+        # Perfect independence → corr = Identity matrix
+        off_diagonal_mask = 1 - jnp.eye(self.r_dim)
+
+        return jnp.sum(jnp.abs(corr * off_diagonal_mask))
+
     def compute_sparsity_regularization(
         self, 
         r_values: jax.Array,
@@ -1283,14 +1298,7 @@ class TiDHy(nnx.Module):
             r_adaptive = jnp.mean(jax.vmap(compute_r_adaptive_single)(r_values))
             reg_losses['r_adaptive'] = r_adaptive
             total_reg += self.sparsity_r_adaptive * r_adaptive
-            
-        if self.sparsity_r_group > 0:
-            def compute_r_group_single(r_seq):
-                return group_lasso_regularization(r_seq, self.sparsity_group_size)
-            r_group = jnp.mean(jax.vmap(compute_r_group_single)(r_values))
-            reg_losses['r_group'] = r_group
-            total_reg += self.sparsity_r_group * r_group
-            
+
         if self.sparsity_r_hoyer > 0:
             r_hoyer = jnp.mean(jax.vmap(hoyer_sparsity_regularization)(r_values))
             reg_losses['r_hoyer'] = r_hoyer
@@ -1312,13 +1320,7 @@ class TiDHy(nnx.Module):
             r2_adaptive = jnp.mean(jax.vmap(compute_r2_adaptive_single)(r2_values))
             reg_losses['r2_adaptive'] = r2_adaptive
             total_reg += self.sparsity_r2_adaptive * r2_adaptive
-            
-        if self.sparsity_r2_group > 0:
-            def compute_r2_group_single(r2_seq):
-                return group_lasso_regularization(r2_seq, self.sparsity_group_size)
-            r2_group = jnp.mean(jax.vmap(compute_r2_group_single)(r2_values))
-            reg_losses['r2_group'] = r2_group
-            total_reg += self.sparsity_r2_group * r2_group
+        
             
         if self.sparsity_r2_hoyer > 0:
             r2_hoyer = jnp.mean(jax.vmap(hoyer_sparsity_regularization)(r2_values))
@@ -1365,7 +1367,20 @@ class TiDHy(nnx.Module):
             w_selective = jnp.mean(jax.vmap(compute_w_selective_single)(w_values))
             reg_losses['w_selective'] = w_selective
             total_reg += self.sparsity_w_selective * w_selective
-        
+
+        # === Interpretability regularization ===
+        # Decoder orthogonality (promotes independent R dimensions via decoder structure)
+        if self.lambda_decoder_ortho > 0:
+            decoder_ortho = self.compute_decoder_orthogonality_loss()
+            reg_losses['decoder_ortho'] = decoder_ortho
+            total_reg += self.lambda_decoder_ortho * decoder_ortho
+
+        # R correlation penalty (promotes independent R dimensions directly)
+        if self.lambda_r_correlation > 0:
+            r_corr = self.compute_r_correlation_penalty(r_values)
+            reg_losses['r_correlation'] = r_corr
+            total_reg += self.lambda_r_correlation * r_corr
+
         return total_reg, reg_losses
 
     def compute_sparsity_metrics(

@@ -48,21 +48,33 @@ def load_data(cfg):
 
 
 
-def stack_data(inputs, sequence_length, overlap=None):
+def stack_data(inputs, sequence_length, overlap=None, all_sequence_lengths=None):
     """
     Create overlapping windows from input sequences using vectorized operations.
 
     Args:
         inputs: Input array of shape (Time, Input_Size) or (Batch, Time, Input_Size)
         sequence_length: Length of each window
-        overlap: Overlap between consecutive windows (default: sequence_length//2)
+        overlap: Overlap between consecutive windows (default: sequence_length for non-overlapping windows)
+        all_sequence_lengths: Optional list of all sequence lengths to test. If provided,
+                            truncates data to the largest length divisible by all sequences
+                            to ensure consistent data coverage across different sequence lengths.
 
     Returns:
         Stacked windows of shape (num_windows, sequence_length, Input_Size)
         or (num_windows * Batch, sequence_length, Input_Size) for 3D input
     """
+    # Truncate data if multiple sequence lengths are provided
+    if all_sequence_lengths is not None:
+        divisible_length = get_divisible_data_length(inputs.shape, all_sequence_lengths)
+        if len(inputs.shape) == 2:
+            inputs = inputs[:divisible_length]
+        elif len(inputs.shape) == 3:
+            inputs = inputs[:, :divisible_length]
+
+    # Default to non-overlapping windows
     if overlap is None:
-        overlap = sequence_length // 2
+        overlap = sequence_length
 
     stride = overlap  # Step size between windows
 
@@ -109,8 +121,62 @@ def stack_data(inputs, sequence_length, overlap=None):
 
     else:
         raise ValueError(f"Input must be 2D or 3D, got shape {inputs.shape}")
-    
-    
+
+
+def get_divisible_data_length(data_shape, sequence_lengths):
+    """
+    Find the largest data length divisible by all sequence lengths.
+
+    This ensures that when using non-overlapping windows (overlap=seq_length),
+    all sequence lengths will divide evenly into the data with no remainder,
+    providing consistent data coverage across different sequence configurations.
+
+    Args:
+        data_shape: Shape of the data array (Time, Features) or (Batch, Time, Features)
+        sequence_lengths: List or array of sequence lengths to test
+
+    Returns:
+        divisible_length: The largest length ≤ total_time that is divisible by all sequence lengths
+
+    Example:
+        >>> data_shape = (50000, 3)
+        >>> seq_lens = [100, 200, 500, 1000, 2000, 50000]
+        >>> get_divisible_data_length(data_shape, seq_lens)
+        50000  # LCM is 50000, and 50000 ≤ 50000
+
+        >>> data_shape = (120000, 3)
+        >>> get_divisible_data_length(data_shape, seq_lens)
+        100000  # LCM is 50000, largest multiple fitting in 120000 is 2×50000
+    """
+    import math
+    from functools import reduce
+
+    # Extract time dimension from data shape
+    if len(data_shape) == 2:
+        total_time = data_shape[0]  # (Time, Features)
+    elif len(data_shape) == 3:
+        total_time = data_shape[1]  # (Batch, Time, Features)
+    else:
+        raise ValueError(f"Data must be 2D or 3D, got shape {data_shape}")
+
+    # Calculate LCM of all sequence lengths
+    def lcm(a, b):
+        return abs(a * b) // math.gcd(a, b)
+
+    lcm_value = reduce(lcm, sequence_lengths)
+
+    # Find largest multiple of LCM that fits in the data
+    divisible_length = (total_time // lcm_value) * lcm_value
+
+    if divisible_length == 0:
+        raise ValueError(
+            f"Data length ({total_time}) is smaller than LCM of sequence lengths ({lcm_value}). "
+            f"Cannot create even divisions for all sequence lengths."
+        )
+
+    return divisible_length
+
+
 def load_isaacgym_dataset(cfg,r_thresh=100,train_size=200,test_size=100):
     data = np.load(cfg.paths.data_dir / 'robot_dataset.npy', allow_pickle=True).item()
     from sklearn.model_selection import train_test_split
@@ -248,17 +314,16 @@ def calc_raw_features(data, normalize=False):
     """
     Raw Positions: 28 features
 
-    Extracts raw x,y positions for all 14 keypoints (2 mice × 7 keypoints × 2 coords).
+    Extracts raw x,y positions for all 14 keypoints (2 mice × 2 coords × 7 keypoints).
 
     Args:
-        data: numpy array of shape (T, 28) where 28 = 2 mice × 7 keypoints × 2 coords
+        data: numpy array of shape (T, 28) where 28 = 2 mice × 2 coords × 7 keypoints
               Keypoint order: nose, ear_left, ear_right, neck, hip_left, hip_right, tail_base
               
     Returns:
         numpy array of shape (T, 28): raw position feature vector
     """
     T = data.shape[0]
-    data = data.transpose(0,1,3,2)
 
     # Reshape data: (T, 14, 2)
     reshaped = data.reshape(T, 14, 2)
@@ -275,7 +340,7 @@ def calc_option_a_features(data, normalize=False):
     Option A: Positions + Velocities + Social Features
 
     Extracts comprehensive features including:
-    - Raw x,y positions for all 14 keypoints (28 features)
+    - Raw x,y positions for all 14 keypoints (28 features) (2 mice × 2 coords × 7 keypoints)
     - Velocities (dx/dt, dy/dt) for all 14 keypoints (28 features)
     - Social interaction features (9 features):
         * Neck-to-neck distance (1)
@@ -286,29 +351,25 @@ def calc_option_a_features(data, normalize=False):
         * Approach velocity (1)
 
     Args:
-        data: numpy array of shape (T, 28) where 28 = 2 mice × 7 keypoints × 2 coords
+        data: numpy array of shape (T, 2, 2, 7) where 2 = mice, 2 = coords, 7 = keypoints
               Keypoint order: nose, ear_left, ear_right, neck, hip_left, hip_right, tail_base
-              Layout: [m1_x0, m1_y0, ..., m1_x6, m1_y6, m2_x0, m2_y0, ..., m2_x6, m2_y6]
+                Layout: [m1_x0, m1_y0, ..., m1_x6, m1_y6, m2_x0, m2_y0, ..., m2_x6, m2_y6]
 
     Returns:
         numpy array of shape (T, 65): concatenated feature vector
     """
     T = data.shape[0]
-    data = data.transpose(0,1,3,2)
 
-    # Reshape data: (T, 2, 7, 2) where dims are [time, mouse, keypoint, xy]
-    # First reshape to (T, 14, 2) then to (T, 2, 7, 2)
-    reshaped = data.reshape(T, 14, 2)
-    m1 = data[:, 0, :]   # Mouse 1: (T, 7, 2)
-    m2 = data[:, 1, :]   # Mouse 2: (T, 7, 2)
+    # Raw data was (T, mouse_id, xy, keypoint)
+    m1 = data[:, 0].transpose(0, 2, 1)  # Mouse 1: (T, 7, 2)
+    m2 = data[:, 1].transpose(0, 2, 1)  # Mouse 2: (T, 7, 2)
 
     # === 1. Raw positions (28 features) ===
-    positions = reshaped  # Keep original layout
+    positions = data.reshape(T, -1)  # (T, 28), where 28 = 2 mice × 2 coords × 7 keypoints 
     if normalize:
-        # social_features = social_features / np.max(np.abs(social_features),axis=-1,keepdims=True)
         positions = positions / np.max(np.abs(positions))
-        m1 = m1 / np.max(np.abs(reshaped),axis=(0,1))
-        m2 = m2 / np.max(np.abs(reshaped),axis=(0,1))
+        m1 = m1 / np.max(np.abs(data))
+        m2 = m2 / np.max(np.abs(data))
 
     # === 2. Velocities (28 features) ===
     # Use forward differences for all timesteps, padding last timestep
@@ -376,16 +437,14 @@ def calc_option_b_features(data, normalize=False):
         numpy array of shape (T, 64): concatenated egocentric feature vector
     """
     T = data.shape[0]
-    data = data.transpose(0,1,3,2)
 
-    # Reshape data: (T, 14, 2)
-    reshaped = data.reshape(T, 14, 2)
-    m1 = data[:, 0, :]   # Mouse 1: (T, 7, 2)
-    m2 = data[:, 1, :]   # Mouse 2: (T, 7, 2)
+    # Raw data was (T, mouse_id, xy, keypoint)
+    m1 = data[:, 0].transpose(0, 2, 1)  # Mouse 1: (T, 7, 2)
+    m2 = data[:, 1].transpose(0, 2, 1)  # Mouse 2: (T, 7, 2)
+
     if normalize:
-        # social_features = social_features / np.max(np.abs(social_features),axis=-1,keepdims=True)
-        m1 = m1 / np.max(np.abs(reshaped),axis=(0,1))
-        m2 = m2 / np.max(np.abs(reshaped),axis=(0,1))
+        m1 = m1 / np.max(np.abs(data))
+        m2 = m2 / np.max(np.abs(data))
         
     # === 1. Per-mouse egocentric positions (24 features) ===
     # Use neck (index 3) as reference point for each mouse

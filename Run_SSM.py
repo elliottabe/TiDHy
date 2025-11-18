@@ -37,9 +37,13 @@ def fit_SLDS(cfg, data_dict):
         inputs_test_SLDS = inputs_test_SLDS.reshape(-1, inputs_test_SLDS.shape[-1])
 
     # Get model hyperparameters with defaults
+    # Prioritize model config, then dataset config, then defaults
     K = getattr(cfg.model, "num_states", getattr(cfg.dataset, "K", 6))
     D = getattr(cfg.model, "latent_dim", 6)
     N = inputs_train_SLDS.shape[-1]
+
+    # Track if num_states was explicitly set in model config
+    num_states_from_model = hasattr(cfg.model, "num_states")
 
     # Check if ground truth states are available
     has_ground_truth = "states_x_test" in data_dict and "states_z_test" in data_dict
@@ -71,8 +75,10 @@ def fit_SLDS(cfg, data_dict):
                     ] = n
                 else:
                     full_state_z = states_z_test  # Already in correct format
-            # Override K if using theoretical max from SLDS structure
-            K = len(lst)
+            # Override K only if not explicitly set in model config
+            if not num_states_from_model:
+                K = len(lst)
+                print(f"Auto-computed K={K} from ssm_params (n_disc_states^Nlds = {n_disc_states}^{Nlds})")
         elif states_z_test.ndim == 1:
             full_state_z = states_z_test
         else:
@@ -83,38 +89,54 @@ def fit_SLDS(cfg, data_dict):
         full_state_z = None
         print("No ground truth latent states available - will skip latent evaluation metrics")
 
-    # Log warning if using defaults
-    if not hasattr(cfg.model, "num_states"):
-        print(f"Warning: model.num_states not specified, using default K={K}")
-    if not hasattr(cfg.model, "latent_dim"):
-        print(f"Warning: model.latent_dim not specified, using default D={D}")
+    # Get training hyperparameters from config
+    emissions = getattr(cfg.model, "emissions", "gaussian")
+    method = getattr(cfg.model, "method", "laplace_em")
+    variational_posterior = getattr(cfg.model, "variational_posterior", "structured_meanfield")
+    num_iters = getattr(cfg.model, "num_iters", 100)
+    alpha = getattr(cfg.model, "alpha", 0.0)
 
-    print(f"N:{N} K: {K}, D: {D}")
+    # Log warnings if using defaults
+    if not hasattr(cfg.model, "num_states"):
+        print(f"Warning: model.num_states not specified, using K={K}")
+    if not hasattr(cfg.model, "latent_dim"):
+        print(f"Warning: model.latent_dim not specified, using D={D}")
+
+    print(f"\nModel Configuration:")
+    print(f"  N (obs dim): {N}")
+    print(f"  K (num states): {K}")
+    print(f"  D (latent dim): {D}")
+    print(f"  Emissions: {emissions}")
+    print(f"  Method: {method}")
+    print(f"  Variational posterior: {variational_posterior}")
+    print(f"  Num iterations: {num_iters}")
+    print(f"  Alpha (stickiness): {alpha}")
+
     # Create the model and initialize its parameters
     slds = ssm.SLDS(
-        N=N,  # inputs_train_SLDS.shape[-1], # Input dimension
-        K=K,  # len(np.unique(full_state_z)), # number of sets of dynamics dimensions
-        D=D,  # data_dict['states_x_test'].shape[-1], # latent dim
-        emissions="gaussian",
+        N=N,
+        K=K,
+        D=D,
+        emissions=emissions,
     )
 
-    # Fit the model using Laplace-EM with a structured variational posterior
+    # Fit the model using configured parameters
     q_lem_elbos, q_lem = slds.fit(
         inputs_train_SLDS,
-        method="laplace_em",
-        variational_posterior="structured_meanfield",
+        method=method,
+        variational_posterior=variational_posterior,
         initialize=False,
-        num_iters=100,
-        alpha=0.0,
+        num_iters=num_iters,
+        alpha=alpha,
     )
 
     posterior = slds._make_variational_posterior(
-        variational_posterior="structured_meanfield",
+        variational_posterior=variational_posterior,
         datas=inputs_test_SLDS,
         inputs=None,
         masks=None,
         tags=None,
-        method="laplace_em",
+        method=method,
     )
     q_lem_x = posterior.mean_continuous_states[0]
     q_lem_z = slds.most_likely_states(q_lem_x, inputs_test_SLDS)
@@ -161,6 +183,20 @@ def fit_SLDS(cfg, data_dict):
         "metrics": {"emission_mse": emission_mse, "final_elbo": q_lem_elbos[-1]},
     }
 
+    # Add model parameters for timescale analysis
+    save_dict["model_params"] = {
+        "dynamics_matrices": np.array(slds.dynamics.As),  # [K, D, D] - one per discrete state
+        "dynamics_biases": np.array(slds.dynamics.bs),  # [K, D]
+        "emission_matrices": np.array(slds.emissions.Cs),  # [K, N, D]
+        "emission_biases": np.array(slds.emissions.ds),  # [K, N]
+        "transition_matrix": np.exp(slds.transitions.log_Ps),  # [K, K] - convert from log probs
+        "log_transition_matrix": slds.transitions.log_Ps,  # [K, K] - raw log probs
+        "init_state_dist": np.exp(slds.init_state_distn.log_pi0),  # [K]
+        "num_states": K,
+        "latent_dim": D,
+        "obs_dim": N,
+    }
+
     # Add ground truth data if available
     if has_ground_truth:
         save_dict["ground_truth_states_z"] = full_state_z
@@ -177,35 +213,39 @@ def fit_SLDS(cfg, data_dict):
     #     pickle.dump(q_lem_y, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     ###### rSLDS
-    print("Fitting rSLDS with Laplace-EM")
+    print("\nFitting rSLDS with configured parameters")
+
+    # Get transition type for rSLDS
+    transitions = getattr(cfg.model, "transitions", "recurrent")
+
     rslds = ssm.SLDS(
-        N=N,  # inputs_train_SLDS.shape[-1], # Input dimension
-        K=K,  # len(np.unique(full_state_z)), # number of sets of dynamics dimensions
-        D=D,  # data_dict['states_x_test'].shape[-1], # latent dim
-        transitions="recurrent",
-        emissions="gaussian",
+        N=N,
+        K=K,
+        D=D,
+        transitions=transitions,
+        emissions=emissions,
     )
 
-    # rslds.initialize(inputs_train_SLDS)
+    # Fit the model using configured parameters
     q_elbos_lem, q_lem = rslds.fit(
         inputs_train_SLDS,
-        method="laplace_em",
-        variational_posterior="structured_meanfield",
+        method=method,
+        variational_posterior=variational_posterior,
         initialize=False,
-        num_iters=100,
-        alpha=0.0,
+        num_iters=num_iters,
+        alpha=alpha,
     )
     # xhat_lem = q_lem.mean_continuous_states[0]
     # rslds.permute(find_permutation(full_state_z, rslds.most_likely_states(xhat_lem, inputs_test_SLDS)))
     # zhat_lem = rslds.most_likely_states(xhat_lem, inputs_test_SLDS)
 
     posterior = rslds._make_variational_posterior(
-        variational_posterior="structured_meanfield",
+        variational_posterior=variational_posterior,
         datas=inputs_test_SLDS,
         inputs=None,
         masks=None,
         tags=None,
-        method="laplace_em",
+        method=method,
     )
     q_lem_x = posterior.mean_continuous_states[0]
     q_lem_z = rslds.most_likely_states(q_lem_x, inputs_test_SLDS)
@@ -243,6 +283,21 @@ def fit_SLDS(cfg, data_dict):
         "rSLDS_elbos": q_elbos_lem,
         "ground_truth_inputs": inputs_test_SLDS,
         "metrics": {"emission_mse": emission_mse_r, "final_elbo": q_elbos_lem[-1]},
+    }
+
+    # Add model parameters for timescale analysis
+    save_dict_r["model_params"] = {
+        "dynamics_matrices": np.array(rslds.dynamics.As),  # [K, D, D] - one per discrete state
+        "dynamics_biases": np.array(rslds.dynamics.bs),  # [K, D]
+        "emission_matrices": np.array(rslds.emissions.Cs),  # [K, N, D]
+        "emission_biases": np.array(rslds.emissions.ds),  # [K, N]
+        "transition_matrix": np.exp(rslds.transitions.log_Ps),  # [K, K] - convert from log probs
+        "log_transition_matrix": rslds.transitions.log_Ps,  # [K, K] - raw log probs
+        "init_state_dist": np.exp(rslds.init_state_distn.log_pi0),  # [K]
+        "num_states": K,
+        "latent_dim": D,
+        "obs_dim": N,
+        "transition_type": transitions,  # 'standard', 'recurrent', or 'recurrent_only'
     }
 
     # Add ground truth data if available

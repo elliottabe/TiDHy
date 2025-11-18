@@ -41,16 +41,16 @@ def compute_task_gradient_norms(
         Tuple of (grad_norms, losses, grads, cos_reg)
     """
 
-    def weighted_loss_fn(mdl: TiDHy):
+    def weighted_loss_fn(model: TiDHy):
         """Compute weighted loss for gradient computation with sparsity regularization"""
         # Generate random keys for each sequence in the batch
         batch_size = X_batch.shape[0]
-        base_key = mdl.rngs()  # Get key outside vmap
+        base_key = model.rngs()  # Get key outside vmap
         keys = jax.random.split(base_key, batch_size)
 
         # Create vmapped version of model
         def forward_single(seq, key):
-            return mdl(seq, return_internals=True, rng_key=key)
+            return model(seq, return_internals=True, rng_key=key)
 
         vmapped_forward = jax.vmap(forward_single, in_axes=(0, 0))
         model_outputs = vmapped_forward(X_batch, keys)
@@ -64,21 +64,21 @@ def compute_task_gradient_norms(
         temp_loss_mean = jnp.mean(temp_loss)
 
         # Compute cosine regularization
-        cos_reg = (1.0 / mdl.mix_dim) * cos_sim_mat(
-            mdl.temporal.value.reshape(mdl.mix_dim, mdl.r_dim, mdl.r_dim)
+        cos_reg = (1.0 / model.mix_dim) * cos_sim_mat(
+            model.temporal.value.reshape(model.mix_dim, model.r_dim, model.r_dim)
         )
 
         # Extract internals for sparsity regularization
         r_values, r2_values, w_values = internals_per_seq
 
         # Compute sparsity regularization
-        sparsity_reg, _ = mdl.compute_sparsity_regularization(
-            r_values.reshape(-1, mdl.r_dim),
-            r2_values.reshape(-1, mdl.r2_dim),
-            w_values.reshape(-1, mdl.mix_dim),
+        sparsity_reg, _ = model.compute_sparsity_regularization(
+            r_values.reshape(-1, model.r_dim),
+            r2_values.reshape(-1, model.r2_dim),
+            w_values.reshape(-1, model.mix_dim),
         )
 
-        temp_with_cos = temp_loss_mean + mdl.cos_eta * cos_reg
+        temp_with_cos = temp_loss_mean + model.cos_eta * cos_reg
 
         # Include sparsity in temporal loss term for GradNorm balancing
         temp_with_cos_and_sparsity = temp_with_cos + sparsity_reg
@@ -109,14 +109,14 @@ def compute_task_gradient_norms(
 
     for i in range(3):
         # Compute gradient for this individual weighted task
-        def single_task_loss(mdl: TiDHy, task_idx: int):
+        def single_task_loss(model: TiDHy, task_idx: int):
             # Generate random keys for each sequence in the batch
             batch_size = X_batch.shape[0]
-            base_key = mdl.rngs()  # Get key outside vmap
+            base_key = model.rngs()  # Get key outside vmap
             keys = jax.random.split(base_key, batch_size)
 
             def forward_single(seq, key):
-                return mdl(seq, return_internals=True, rng_key=key)
+                return model(seq, return_internals=True, rng_key=key)
 
             vmapped_forward = jax.vmap(forward_single, in_axes=(0, 0))
             model_outputs = vmapped_forward(X_batch, keys)
@@ -128,21 +128,21 @@ def compute_task_gradient_norms(
             spatial_loss_rbar_mean = jnp.mean(spatial_loss_rbar)
             temp_loss_mean = jnp.mean(temp_loss)
 
-            cos_reg = (1.0 / mdl.mix_dim) * cos_sim_mat(
-                mdl.temporal.value.reshape(mdl.mix_dim, mdl.r_dim, mdl.r_dim)
+            cos_reg = (1.0 / model.mix_dim) * cos_sim_mat(
+                model.temporal.value.reshape(model.mix_dim, model.r_dim, model.r_dim)
             )
 
             # Extract internals for sparsity regularization
             r_values, r2_values, w_values = internals_per_seq
 
             # Compute sparsity regularization
-            sparsity_reg, _ = mdl.compute_sparsity_regularization(
-                r_values.reshape(-1, mdl.r_dim),
-                r2_values.reshape(-1, mdl.r2_dim),
-                w_values.reshape(-1, mdl.mix_dim),
+            sparsity_reg, _ = model.compute_sparsity_regularization(
+                r_values.reshape(-1, model.r_dim),
+                r2_values.reshape(-1, model.r2_dim),
+                w_values.reshape(-1, model.mix_dim),
             )
 
-            temp_with_cos = temp_loss_mean + mdl.cos_eta * cos_reg
+            temp_with_cos = temp_loss_mean + model.cos_eta * cos_reg
             temp_with_cos_and_sparsity = temp_with_cos + sparsity_reg
 
             task_losses = jnp.array(
@@ -865,7 +865,7 @@ def evaluate_record(
         spat_loss_fn = model.get_spatial_loss_fn()
 
         # First step (return_stats=False for performance in training)
-        r0, r2_0 = model.inf_first_step(x_seq[0], first_step_key, return_stats=False)
+        r0, r2_0, inf_stats_0 = model.inf_first_step(x_seq[0], first_step_key, return_stats=True)
         x_hat_0 = model.spatial_decoder(r0)
         x_bar_0 = model.spatial_decoder(jnp.zeros(model.r_dim))
 
@@ -890,7 +890,7 @@ def evaluate_record(
             x_bar = model.spatial_decoder(r_bar)
 
             # Inference (return_stats=False for performance in training)
-            r, r2 = model.inf(x_t, r_prev, r2_prev, return_stats=False)
+            r, r2, inf_stats = model.inf(x_t, r_prev, r2_prev, return_stats=True)
             x_hat = model.spatial_decoder(r)
 
             # Compute losses
@@ -909,6 +909,7 @@ def evaluate_record(
                 "spatial_loss_rhat": loss_rhat,
                 "spatial_loss_rbar": loss_rbar,
                 "temp_loss": tloss,
+                "inf_stats": inf_stats,
             }
 
             return (r, r2), outputs
@@ -935,6 +936,12 @@ def evaluate_record(
                 [spatial_losses_rbar[0][None], scan_outputs["spatial_loss_rbar"]], axis=0
             )
             temp_losses = jnp.concatenate([temp_losses[0][None], scan_outputs["temp_loss"]], axis=0)
+            # Concatenate inf_stats - need to add time dimension to inf_stats_0 first
+            inf_stats = jax.tree.map(
+                lambda s0, sx: jnp.concatenate([s0[None, ...], sx], axis=0), 
+                inf_stats_0, 
+                scan_outputs["inf_stats"]
+            )
         else:
             # T == 1 case
             r_hats = r0[None, :]
@@ -947,6 +954,7 @@ def evaluate_record(
             spatial_losses_rhat = jnp.array(spatial_losses_rhat)
             spatial_losses_rbar = jnp.array(spatial_losses_rbar)
             temp_losses = jnp.array(temp_losses)
+            inf_stats = jax.tree.map(lambda x: x[None], inf_stats_0)
 
         return {
             "R_hat": r_hats,
@@ -959,6 +967,7 @@ def evaluate_record(
             "spatial_loss_rhat": spatial_losses_rhat,
             "spatial_loss_rbar": spatial_losses_rbar,
             "temp_loss": temp_losses,
+            "inf_stats": inf_stats,
         }
 
     # Generate random keys for each sequence in the batch

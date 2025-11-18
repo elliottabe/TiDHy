@@ -1,0 +1,42 @@
+# SSM/SLDS Baseline Model Configuration
+# This config provides default hyperparameters for SSM/SLDS/rSLDS models
+# Compatible with all datasets via fallback mechanisms
+
+##### Core Model Architecture #####
+# Number of discrete states (K)
+num_states: 4  # Default: 6, can be overridden by dataset.K or computed from ssm_params.Nlds
+
+# Latent continuous dimension (D)
+latent_dim: 6  # Default: 6, should match dataset.ssm_params.latent_dim if available
+
+##### Training Parameters #####
+# Emission distribution type
+emissions: "gaussian"  # Options: "gaussian", "poisson", "bernoulli"
+
+# Inference method
+method: "laplace_em"  # Options: "laplace_em", "svi"
+
+# Variational posterior type
+variational_posterior: "structured_meanfield"  # Options: "structured_meanfield", "mf"
+
+# Number of training iterations
+num_iters: 100  # Default: 100
+
+# Stickiness parameter (encourages state persistence)
+alpha: 0.0  # Default: 0.0 (no stickiness), higher values encourage staying in same state
+
+# Transition type for rSLDS
+transitions: "recurrent"  # Options: "standard", "recurrent", "recurrent_only"
+
+##### Notes #####
+# For SLDS/SSM/LDS datasets with ssm_params:
+# - num_states can be auto-computed as n_disc_states^Nlds if not explicitly set
+# - latent_dim should ideally match ssm_params.latent_dim
+# - Ground truth metrics will be available
+#
+# For other datasets (Rossler, CalMS21, AnymalTerrain):
+# - num_states and latent_dim must be specified here or via CLI
+# - No ground truth metrics will be available
+#
+# Usage: python Run_SSM.py model=ssm_baseline dataset=<dataset_name>
+# Override: python Run_SSM.py model=ssm_baseline dataset=Rossler model.num_states=8

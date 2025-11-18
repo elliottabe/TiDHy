@@ -52,6 +52,7 @@ dependencies = [
     # Data I/O
     "h5py>=3.8.0",
     "tables>=3.8.0",  # pytables
+    "opencv-python>=4.7.0",
 
     # Visualization
     "matplotlib>=3.7.0",

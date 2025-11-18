@@ -13,10 +13,8 @@ from .analysis import (
     compute_timescale_spectrum,
     analyze_mixture_timescales,
     cluster_timescales,
-    fit_power_law_timescales,
     # Hypernetwork-aware timescale analysis
     analyze_effective_timescales,
-    analyze_weighted_mixture_timescales,
     analyze_time_varying_timescales,
     # Hypernetwork analysis
     analyze_hypernetwork_usage,

@@ -8,6 +8,8 @@ This module provides functions for:
 """
 
 import jax.numpy as jnp
+from jax import jit, vmap
+import jax.lax as lax
 import numpy as np
 from typing import Dict, Tuple, Any, Optional
 from scipy import stats
@@ -252,6 +254,7 @@ def analyze_latent_dimension(
 # Spectral Timescale Analysis
 # ============================================================================
 
+@jit
 def compute_timescale_spectrum(
     V: jnp.ndarray,
     dt: float = 1.0
@@ -279,47 +282,25 @@ def compute_timescale_spectrum(
         - is_stable: Boolean array indicating |λᵢ| < 1
         - decay_rates: -log|λᵢ| / dt (inverse timescales)
     """
-    # Check for invalid input matrix
-    if not is_valid_array(V, allow_inf=False):
-        r_dim = V.shape[0]
-        return {
-            'eigenvalues': jnp.zeros(r_dim, dtype=complex),
-            'magnitudes': jnp.zeros(r_dim),
-            'timescales': jnp.full(r_dim, jnp.inf),
-            'frequencies': jnp.zeros(r_dim),
-            'is_stable': jnp.zeros(r_dim, dtype=bool),
-            'decay_rates': jnp.zeros(r_dim)
-        }
+    r_dim = V.shape[0]
 
-    # Compute eigenvalues
+    # Check for invalid input matrix (NaN or Inf)
+    input_valid = ~jnp.any(jnp.isnan(V)) & ~jnp.any(jnp.isinf(V))
+
+    # Compute eigenvalues (will be zeros if input invalid, but computed anyway for JIT)
     eigenvalues = jnp.linalg.eigvals(V)
 
-    # Check if eigenvalues are valid (can contain NaN from degenerate matrices)
-    if jnp.any(jnp.isnan(eigenvalues)):
-        r_dim = V.shape[0]
-        return {
-            'eigenvalues': jnp.zeros(r_dim, dtype=complex),
-            'magnitudes': jnp.zeros(r_dim),
-            'timescales': jnp.full(r_dim, jnp.inf),
-            'frequencies': jnp.zeros(r_dim),
-            'is_stable': jnp.zeros(r_dim, dtype=bool),
-            'decay_rates': jnp.zeros(r_dim)
-        }
+    # Check if eigenvalues are valid
+    eigenvalues_valid = ~jnp.any(jnp.isnan(eigenvalues))
 
     # Magnitudes
     magnitudes = jnp.abs(eigenvalues)
 
     # Check for NaN in magnitudes
-    if jnp.any(jnp.isnan(magnitudes)):
-        r_dim = V.shape[0]
-        return {
-            'eigenvalues': eigenvalues,
-            'magnitudes': jnp.zeros(r_dim),
-            'timescales': jnp.full(r_dim, jnp.inf),
-            'frequencies': jnp.zeros(r_dim),
-            'is_stable': jnp.zeros(r_dim, dtype=bool),
-            'decay_rates': jnp.zeros(r_dim)
-        }
+    magnitudes_valid = ~jnp.any(jnp.isnan(magnitudes))
+
+    # Combined validity check
+    all_valid = input_valid & eigenvalues_valid & magnitudes_valid
 
     # Stability check
     is_stable = magnitudes < 1.0
@@ -348,6 +329,14 @@ def compute_timescale_spectrum(
     # Replace any NaN frequencies with 0
     frequencies = jnp.where(jnp.isnan(frequencies), 0.0, frequencies)
 
+    # If any validation failed, return default values
+    eigenvalues = jnp.where(all_valid, eigenvalues, jnp.zeros(r_dim, dtype=complex))
+    magnitudes = jnp.where(all_valid, magnitudes, jnp.zeros(r_dim))
+    timescales = jnp.where(all_valid, timescales, jnp.full(r_dim, jnp.inf))
+    frequencies = jnp.where(all_valid, frequencies, jnp.zeros(r_dim))
+    is_stable = jnp.where(all_valid, is_stable, jnp.zeros(r_dim, dtype=bool))
+    decay_rates = jnp.where(all_valid, decay_rates, jnp.zeros(r_dim))
+
     return {
         'eigenvalues': eigenvalues,
         'magnitudes': magnitudes,
@@ -356,6 +345,10 @@ def compute_timescale_spectrum(
         'is_stable': is_stable,
         'decay_rates': decay_rates
     }
+
+
+# Vectorized version for batch processing
+compute_timescale_spectrum_batch = vmap(compute_timescale_spectrum, in_axes=(0, None))
 
 
 def analyze_mixture_timescales(
@@ -387,19 +380,30 @@ def analyze_mixture_timescales(
 
     V_matrices = temporal.reshape(mix_dim, r_dim, r_dim)
 
-    # Analyze each component
+    # Analyze all components in parallel using vmap
+    all_spectra = compute_timescale_spectrum_batch(V_matrices, dt)
+
+    # Convert to list format and extract finite stable timescales
     spectral_results = []
     timescales_per_component = []
     all_timescales = []
 
     for m in range(mix_dim):
-        V_m = V_matrices[m]
-        spectrum = compute_timescale_spectrum(V_m, dt)
-        spectral_results.append(spectrum)
+        # Store spectral results
+        spectral_results.append({
+            'eigenvalues': all_spectra['eigenvalues'][m],
+            'magnitudes': all_spectra['magnitudes'][m],
+            'timescales': all_spectra['timescales'][m],
+            'frequencies': all_spectra['frequencies'][m],
+            'is_stable': all_spectra['is_stable'][m],
+            'decay_rates': all_spectra['decay_rates'][m]
+        })
 
         # Extract finite stable timescales
-        finite_mask = jnp.isfinite(spectrum['timescales']) & spectrum['is_stable'] & (~jnp.isnan(spectrum['timescales']))
-        component_timescales = spectrum['timescales'][finite_mask]
+        finite_mask = (jnp.isfinite(all_spectra['timescales'][m]) &
+                       all_spectra['is_stable'][m] &
+                       (~jnp.isnan(all_spectra['timescales'][m])))
+        component_timescales = all_spectra['timescales'][m][finite_mask]
         timescales_per_component.append(component_timescales)
 
         if len(component_timescales) > 0:
@@ -441,7 +445,8 @@ def analyze_mixture_timescales(
 def cluster_timescales(
     timescales: jnp.ndarray,
     n_clusters: Optional[int] = None,
-    log_space: bool = True
+    log_space: bool = True,
+    magnitudes: Optional[jnp.ndarray] = None
 ) -> jnp.ndarray:
     """
     Cluster timescales to identify unique temporal scales.
@@ -530,89 +535,7 @@ def cluster_timescales(
         non_empty = hist > 0
         unique_timescales = bin_centers[non_empty]
 
-    return unique_timescales
-
-
-def fit_power_law_timescales(
-    timescales: jnp.ndarray,
-    plot: bool = False
-) -> Tuple[float, float]:
-    """
-    Fit power law to timescale distribution: P(τ) ~ τ^(-α)
-
-    Many complex systems exhibit power-law distributed timescales,
-    indicating scale-free temporal dynamics.
-
-    Args:
-        timescales: Array of timescales
-        plot: Whether to create diagnostic plot (requires matplotlib)
-
-    Returns:
-        - alpha: Power law exponent
-        - fit_quality: R² of log-log fit
-    """
-    if len(timescales) < 3:
-        return float('nan'), float('nan')
-
-    # Filter out invalid timescales (NaN and Inf)
-    valid_mask = jnp.isfinite(timescales)
-    valid_timescales = timescales[valid_mask]
-
-    # Check if enough valid timescales remain
-    if len(valid_timescales) < 3:
-        return float('nan'), float('nan')
-
-    # Convert to numpy for scipy
-    timescales_np = np.array(valid_timescales)
-
-    # Create histogram (PDF)
-    hist, bin_edges = np.histogram(timescales_np, bins=20, density=True)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-
-    # Remove zero bins for log-log fit
-    nonzero = hist > 0
-    if np.sum(nonzero) < 3:
-        return float('nan'), float('nan')
-
-    x = bin_centers[nonzero]
-    y = hist[nonzero]
-
-    # Fit in log-log space: log(P) = -α*log(τ) + C
-    log_x = np.log10(x)
-    log_y = np.log10(y)
-
-    slope, intercept, r_value, p_value, std_err = stats.linregress(log_x, log_y)
-    alpha = -slope
-    r_squared = r_value ** 2
-
-    if plot:
-        try:
-            import matplotlib.pyplot as plt
-
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
-
-            # Linear histogram
-            ax1.hist(timescales_np, bins=30, density=True, alpha=0.7)
-            ax1.set_xlabel('Timescale τ')
-            ax1.set_ylabel('Probability Density')
-            ax1.set_title('Timescale Distribution')
-
-            # Log-log plot with fit
-            ax2.scatter(log_x, log_y, alpha=0.6, label='Data')
-            fit_line = slope * log_x + intercept
-            ax2.plot(log_x, fit_line, 'r--', label=f'Fit: α={alpha:.2f}, R²={r_squared:.3f}')
-            ax2.set_xlabel('log₁₀(τ)')
-            ax2.set_ylabel('log₁₀(P(τ))')
-            ax2.set_title('Power Law Fit')
-            ax2.legend()
-            ax2.grid(True, alpha=0.3)
-
-            plt.tight_layout()
-            plt.show()
-        except ImportError:
-            print("Matplotlib not available for plotting")
-
-    return float(alpha), float(r_squared)
+    return {'cluster_centers': unique_timescales, 'cluster_counts': hist[non_empty], 'num_clusters': len(unique_timescales)}
 
 
 def analyze_effective_timescales(
@@ -658,48 +581,48 @@ def analyze_effective_timescales(
     n_matrices = V_t_flat.shape[0]
 
     # Analyze a subset if there are too many matrices (for efficiency)
-    max_analyze = 1000
-    if n_matrices > max_analyze:
-        # Sample uniformly
-        indices = jnp.linspace(0, n_matrices - 1, max_analyze, dtype=int)
-        V_t_sample = V_t_flat[indices]
-        sample_rate = n_matrices / max_analyze
-    else:
-        V_t_sample = V_t_flat
-        indices = jnp.arange(n_matrices)
-        sample_rate = 1.0
+    # max_analyze = 10000
+    # if n_matrices > max_analyze:
+    #     # Sample uniformly
+    #     indices = jnp.linspace(0, n_matrices - 1, max_analyze, dtype=int)
+    #     V_t_sample = V_t_flat[indices]
+    #     sample_rate = n_matrices / max_analyze
+    # else:
+    V_t_sample = V_t_flat
+    indices = jnp.arange(n_matrices)
+    sample_rate = 1.0
 
-    # Analyze each effective matrix
-    all_timescales = []
-    n_stable_per_matrix = []
+    # Analyze all matrices in parallel using vmap
+    all_spectra = compute_timescale_spectrum_batch(V_t_sample, dt)
+
+    # Store sample results (first 10 for inspection)
     spectral_results_sample = []
+    n_sample = min(10, len(indices))
+    for i in range(n_sample):
+        spectral_results_sample.append({
+            'eigenvalues': all_spectra['eigenvalues'][i],
+            'magnitudes': all_spectra['magnitudes'][i],
+            'timescales': all_spectra['timescales'][i],
+            'frequencies': all_spectra['frequencies'][i],
+            'is_stable': all_spectra['is_stable'][i],
+            'decay_rates': all_spectra['decay_rates'][i]
+        })
 
-    for i, idx in enumerate(indices):
-        V_t = V_t_sample[i]
-        spectrum = compute_timescale_spectrum(V_t, dt)
+    # Extract finite stable timescales from all matrices
+    finite_mask = (jnp.isfinite(all_spectra['timescales']) &
+                   all_spectra['is_stable'] &
+                   (~jnp.isnan(all_spectra['timescales'])))
 
-        # Store sample results (first 10 for inspection)
-        if i < 10:
-            spectral_results_sample.append(spectrum)
+    # Flatten the finite timescales (removes masked values)
+    all_timescales = all_spectra['timescales'][finite_mask]
 
-        # Extract finite stable timescales
-        finite_mask = jnp.isfinite(spectrum['timescales']) & spectrum['is_stable'] & (~jnp.isnan(spectrum['timescales']))
-        matrix_timescales = spectrum['timescales'][finite_mask]
+    # Count stable modes per matrix
+    n_stable_per_matrix = jnp.sum(all_spectra['is_stable'], axis=1)
+    n_stable_per_matrix = [int(n) if not (jnp.isnan(n) or jnp.isinf(n)) else 0
+                           for n in n_stable_per_matrix]
 
-        # Count stable modes with NaN check
-        n_stable = jnp.sum(spectrum['is_stable'])
-        if jnp.isnan(n_stable) or jnp.isinf(n_stable):
-            n_stable_per_matrix.append(0)
-        else:
-            n_stable_per_matrix.append(int(n_stable))
-
-        if len(matrix_timescales) > 0:
-            all_timescales.append(matrix_timescales)
-
-    # Combine all timescales
+    # Compute statistics if we have any timescales
     if len(all_timescales) > 0:
-        all_timescales = jnp.concatenate(all_timescales)
-
         timescale_stats = {
             'mean': float(jnp.mean(all_timescales)),
             'median': float(jnp.median(all_timescales)),
@@ -728,127 +651,58 @@ def analyze_effective_timescales(
     }
 
 
-def analyze_weighted_mixture_timescales(
-    model,
-    W: jnp.ndarray,
-    dt: float = 1.0,
-    stability_threshold: float = 1.0
-) -> Dict[str, Any]:
+def extract_top_n_timescales(
+    timescales: jnp.ndarray,
+    eigenvalues: jnp.ndarray,
+    is_stable: jnp.ndarray,
+    n_dominant: int
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """
-    Analyze timescales of mixture components weighted by their usage frequency.
+    Extract top N dominant timescales from a single spectrum.
 
-    Instead of treating all V_m equally, this weights each component's timescales
-    by how often it's actually used (based on hypernetwork weights w).
+    JIT-compatible version that avoids boolean indexing and variable-length arrays.
 
     Args:
-        model: Trained TiDHy model with temporal.value parameter
-        W: Mixture weights over time from inference - shape (T, mix_dim) or (batch, T, mix_dim)
-        dt: Time step size (matches data sampling rate)
-        stability_threshold: Magnitude threshold for stable eigenvalues (default: 1.0)
+        timescales: Timescales array (r_dim,)
+        eigenvalues: Eigenvalues array (r_dim,)
+        is_stable: Stability mask (r_dim,)
+        n_dominant: Number of dominant timescales to extract
 
     Returns:
-        Dictionary containing:
-        - weighted_timescales: Timescales weighted by component usage
-        - component_usage: Average weight for each mixture component
-        - timescales_per_component: Timescale arrays for each V_m
-        - weighted_unique_timescales: Usage-weighted clustered timescales
-        - comparison: Comparison with unweighted analysis
+        - top_timescales: Top N timescales (n_dominant,), padded with NaN if needed
+        - top_eigenvalues: Corresponding eigenvalues (n_dominant,)
     """
-    # Extract temporal matrices
-    temporal = model.temporal.value  # Shape: (mix_dim, r_dim * r_dim)
-    mix_dim = model.mix_dim
-    r_dim = model.r_dim
-    V_matrices = temporal.reshape(mix_dim, r_dim, r_dim)
+    # Create validity mask: finite, stable, non-NaN
+    finite_mask = jnp.isfinite(timescales) & is_stable & (~jnp.isnan(timescales))
 
-    # Compute average usage of each component
-    if W.ndim == 3:
-        # Batched: (batch, T, mix_dim)
-        W_flat = W.reshape(-1, mix_dim)
-    else:
-        # Single sequence: (T, mix_dim)
-        W_flat = W
+    # Replace invalid/unstable values with -inf (will sort to end)
+    valid_timescales = jnp.where(finite_mask, timescales, -jnp.inf)
 
-    component_usage = jnp.mean(W_flat, axis=0)  # (mix_dim,)
+    # Sort descending (largest timescales first)
+    sort_idx = jnp.argsort(valid_timescales)[::-1]
+    sorted_timescales = valid_timescales[sort_idx]
+    sorted_eigenvalues = eigenvalues[sort_idx]
 
-    # Analyze each component
-    timescales_per_component = []
-    weighted_timescales_list = []
-    spectral_results = []
+    # Take top N - just use regular slicing since n_dominant will be static in practice
+    # When vmapped, each call has a concrete n_dominant value
+    top_timescales = sorted_timescales[:n_dominant]
+    top_eigenvalues = sorted_eigenvalues[:n_dominant]
 
-    for m in range(mix_dim):
-        V_m = V_matrices[m]
-        spectrum = compute_timescale_spectrum(V_m, dt)
-        spectral_results.append(spectrum)
+    # Replace -inf with NaN in output
+    top_timescales = jnp.where(top_timescales == -jnp.inf, jnp.nan, top_timescales)
+    top_eigenvalues = jnp.where(jnp.isinf(top_timescales), jnp.nan, top_eigenvalues)
 
-        # Extract finite stable timescales
-        finite_mask = jnp.isfinite(spectrum['timescales']) & spectrum['is_stable'] & (~jnp.isnan(spectrum['timescales']))
-        component_timescales = spectrum['timescales'][finite_mask]
-        timescales_per_component.append(component_timescales)
+    return top_timescales, top_eigenvalues
 
-        # Weight by component usage
-        if len(component_timescales) > 0 and component_usage[m] > 1e-6:
-            # Replicate timescales according to usage weight
-            # (approximate: use weight as probability mass)
-            weighted_timescales_list.append((component_timescales, component_usage[m]))
 
-    # Create weighted timescale distribution
-    # Method: weight each component's timescales by usage
-    if len(weighted_timescales_list) > 0:
-        # Concatenate all timescales with weights
-        all_timescales = []
-        all_weights = []
-        for timescales, weight in weighted_timescales_list:
-            all_timescales.append(timescales)
-            all_weights.append(jnp.full(len(timescales), weight))
+# Create JIT-compiled version with static n_dominant
+# Note: We use a lambda to make this work with vmap
+def _extract_jit(timescales, eigenvalues, is_stable, n_dominant):
+    """JIT wrapper that compiles for specific n_dominant values."""
+    return extract_top_n_timescales(timescales, eigenvalues, is_stable, n_dominant)
 
-        weighted_timescales = jnp.concatenate(all_timescales)
-        weights = jnp.concatenate(all_weights)
-
-        # Normalize weights
-        weights = weights / jnp.sum(weights)
-
-        # Compute weighted statistics
-        weighted_mean = float(jnp.sum(weighted_timescales * weights))
-        weighted_median = float(jnp.median(weighted_timescales))  # Approximation
-
-        # Cluster weighted timescales
-        weighted_unique = cluster_timescales(weighted_timescales)
-    else:
-        weighted_timescales = jnp.array([])
-        weights = jnp.array([])
-        weighted_mean = None
-        weighted_median = None
-        weighted_unique = jnp.array([])
-
-    # Compare with unweighted analysis
-    all_unweighted = []
-    for timescales in timescales_per_component:
-        if len(timescales) > 0:
-            all_unweighted.append(timescales)
-
-    if len(all_unweighted) > 0:
-        all_unweighted = jnp.concatenate(all_unweighted)
-        unweighted_mean = float(jnp.mean(all_unweighted))
-    else:
-        all_unweighted = jnp.array([])
-        unweighted_mean = None
-
-    return {
-        'weighted_timescales': weighted_timescales,
-        'weights': weights,
-        'component_usage': component_usage,
-        'timescales_per_component': timescales_per_component,
-        'weighted_unique_timescales': weighted_unique,
-        'weighted_mean': weighted_mean,
-        'weighted_median': weighted_median,
-        'spectral_results': spectral_results,
-        'comparison': {
-            'unweighted_timescales': all_unweighted,
-            'unweighted_mean': unweighted_mean,
-            'weighted_mean': weighted_mean,
-            'usage_entropy': float(compute_component_entropy(component_usage))
-        }
-    }
+# Vectorized version for batch processing
+extract_top_n_timescales_batch = jit(vmap(_extract_jit, in_axes=(0, 0, 0, None)), static_argnums=(3,))
 
 
 def analyze_time_varying_timescales(
@@ -889,50 +743,17 @@ def analyze_time_varying_timescales(
     time_indices = jnp.arange(0, T, stride)
     n_timesteps = len(time_indices)
 
-    # Track dominant timescales over time
-    dominant_timescales_list = []
-    dominant_eigenvalues_list = []
+    # Compute spectra for all timesteps in parallel using vmap
+    V_t_sampled = V_t_sequence[time_indices]
+    all_spectra = compute_timescale_spectrum_batch(V_t_sampled, dt)
 
-    for t_idx in time_indices:
-        V_t = V_t_sequence[t_idx]
-        spectrum = compute_timescale_spectrum(V_t, dt)
-
-        # Get stable timescales sorted by magnitude (largest first)
-        finite_mask = jnp.isfinite(spectrum['timescales']) & spectrum['is_stable'] & (~jnp.isnan(spectrum['timescales']))
-        timescales = spectrum['timescales'][finite_mask]
-        eigenvalues = spectrum['eigenvalues'][finite_mask]
-
-        if len(timescales) > 0:
-            # Sort by timescale (descending - slowest first)
-            sort_idx = jnp.argsort(timescales)[::-1]
-            timescales_sorted = timescales[sort_idx]
-            eigenvalues_sorted = eigenvalues[sort_idx]
-
-            # Take top N
-            n_available = min(n_dominant, len(timescales_sorted))
-            top_timescales = timescales_sorted[:n_available]
-            top_eigenvalues = eigenvalues_sorted[:n_available]
-
-            # Pad if necessary
-            if n_available < n_dominant:
-                top_timescales = jnp.concatenate([
-                    top_timescales,
-                    jnp.full(n_dominant - n_available, jnp.nan)
-                ])
-                top_eigenvalues = jnp.concatenate([
-                    top_eigenvalues,
-                    jnp.full(n_dominant - n_available, jnp.nan)
-                ])
-        else:
-            # No stable timescales
-            top_timescales = jnp.full(n_dominant, jnp.nan)
-            top_eigenvalues = jnp.full(n_dominant, jnp.nan)
-
-        dominant_timescales_list.append(top_timescales)
-        dominant_eigenvalues_list.append(top_eigenvalues)
-
-    dominant_timescales = jnp.stack(dominant_timescales_list)  # (n_timesteps, n_dominant)
-    dominant_eigenvalues = jnp.stack(dominant_eigenvalues_list)  # (n_timesteps, n_dominant)
+    # Extract top N dominant timescales for all timesteps in parallel using vmap
+    dominant_timescales, dominant_eigenvalues = extract_top_n_timescales_batch(
+        all_spectra['timescales'],
+        all_spectra['eigenvalues'],
+        all_spectra['is_stable'],
+        n_dominant
+    )  # Both shape: (n_timesteps, n_dominant)
 
     # Detect transitions: where dominant timescale changes significantly
     transitions = []
@@ -1041,6 +862,7 @@ def analyze_hypernetwork_usage(
     }
 
 
+@jit
 def compute_component_entropy(weights: jnp.ndarray) -> float:
     """
     Compute Shannon entropy of mixture weights.
@@ -1054,6 +876,7 @@ def compute_component_entropy(weights: jnp.ndarray) -> float:
     Returns:
         Normalized entropy [0, 1]
     """
+    # Ensure 1D by taking mean along first axis if needed
     if weights.ndim > 1:
         weights = jnp.mean(weights, axis=0)
 
@@ -1066,7 +889,7 @@ def compute_component_entropy(weights: jnp.ndarray) -> float:
     # Normalize by maximum entropy
     max_entropy = jnp.log(len(weights))
 
-    return float(H / max_entropy)
+    return H / max_entropy
 
 
 # ============================================================================
@@ -1360,7 +1183,7 @@ def analyze_hierarchical_rossler_recovery(
     Performs complete timescale recovery analysis including:
     1. Compute ground truth from Rossler trajectory
     2. Run inference to get model predictions
-    3. Analyze using basis, effective, and weighted methods
+    3. Analyze using basis and effective
     4. Compare each to ground truth
 
     Args:
@@ -1376,11 +1199,9 @@ def analyze_hierarchical_rossler_recovery(
         Dictionary containing:
         - ground_truth: Ground truth timescales dict
         - basis_analysis: Basis V_m analysis results
-        - effective_analysis: Effective V_t analysis results (if available)
-        - weighted_analysis: Weighted analysis results (if available)
+        - effective_analysis: Effective U_t analysis results (if available)
         - basis_comparison: Comparison of basis to ground truth
         - effective_comparison: Comparison of effective to ground truth
-        - weighted_comparison: Comparison of weighted to ground truth
         - result_dict: Full inference results for further analysis
     """
     from TiDHy.models.TiDHy_nnx_vmap_training import evaluate_record
@@ -1409,11 +1230,6 @@ def analyze_hierarchical_rossler_recovery(
     if 'Ut' in result_dict:
         effective_results = analyze_effective_timescales(result_dict, dt=dt)
 
-    # Weighted analysis (if W available)
-    weighted_results = None
-    if 'W' in result_dict:
-        weighted_results = analyze_weighted_mixture_timescales(model, result_dict['W'], dt=dt)
-
     # 4. Compare each to ground truth
     basis_comparison = compare_discovered_to_ground_truth(
         basis_results['all_timescales'],
@@ -1429,22 +1245,147 @@ def analyze_hierarchical_rossler_recovery(
             tolerance=tolerance
         )
 
-    weighted_comparison = None
-    if weighted_results is not None and len(weighted_results['weighted_timescales']) > 0:
-        weighted_comparison = compare_discovered_to_ground_truth(
-            weighted_results['weighted_timescales'],
-            gt_timescales,
-            tolerance=tolerance
-        )
 
     return {
         'ground_truth': ground_truth,
         'basis_analysis': basis_results,
         'effective_analysis': effective_results,
-        'weighted_analysis': weighted_results,
         'basis_comparison': basis_comparison,
         'effective_comparison': effective_comparison,
-        'weighted_comparison': weighted_comparison,
         'result_dict': result_dict,
         'ground_truth_timescales': gt_timescales
     }
+
+
+# ============================================================================
+# State-Annotation Comparison (for behavioral datasets)
+# ============================================================================
+
+def analyze_state_annotation_correspondence(
+    result_dict: Dict[str, Any],
+    annotations: np.ndarray,
+    behavior_names: Optional[list] = None,
+    state_key: str = 'z_discrete',
+    verbose: bool = True
+) -> Optional[Dict[str, Any]]:
+    """
+    Analyze correspondence between learned discrete states and behavioral annotations.
+
+    This function integrates state-annotation comparison into the TiDHy analysis
+    pipeline. It can be used with any model that produces discrete states (e.g.,
+    SLDS, rSLDS, or TiDHy models with discrete latent variables).
+
+    Args:
+        result_dict: Model inference results (must contain discrete states)
+        annotations: Array [T] with ground-truth behavioral annotation indices
+        behavior_names: Optional list of behavior names for each annotation index
+        state_key: Key in result_dict containing discrete states (default: 'z_discrete')
+        verbose: If True, print summary statistics
+
+    Returns:
+        Dictionary with comprehensive state-annotation analysis, or None if
+        discrete states not found in result_dict. Contains:
+        - matching: State-to-annotation matching results
+        - clustering_metrics: ARI, NMI, V-measure, accuracy
+        - purity_metrics: State and annotation purity
+        - per_behavior_metrics: Precision, recall, F1 per behavior
+    """
+    from .state_annotation_comparison import analyze_state_annotation_correspondence as analyze_correspondence
+
+    # Check if discrete states are available
+    if state_key not in result_dict:
+        if verbose:
+            print(f"Warning: '{state_key}' not found in result_dict. Skipping annotation comparison.")
+            print(f"Available keys: {list(result_dict.keys())}")
+        return None
+
+    states = result_dict[state_key]
+
+    # Ensure states is a 1D array
+    if len(states.shape) > 1:
+        # If states is [batch, time] or similar, flatten or take first batch
+        if states.shape[0] == 1:
+            states = states[0]
+        else:
+            states = states.flatten()
+
+    # Convert to numpy if needed (may be JAX array)
+    states = np.asarray(states).flatten()
+    annotations = np.asarray(annotations).flatten()
+
+    # Ensure same length
+    min_len = min(len(states), len(annotations))
+    if len(states) != len(annotations):
+        if verbose:
+            print(f"Warning: Truncating to common length {min_len} (states: {len(states)}, annotations: {len(annotations)})")
+        states = states[:min_len]
+        annotations = annotations[:min_len]
+
+    # Run comprehensive analysis
+    results = analyze_correspondence(
+        states=states,
+        annotations=annotations,
+        behavior_names=behavior_names,
+        verbose=verbose
+    )
+
+    return results
+
+
+def add_annotation_comparison_to_results(
+    results: Dict[str, Any],
+    annotations: np.ndarray,
+    behavior_names: Optional[list] = None,
+    state_key: str = 'z_discrete',
+    verbose: bool = False
+) -> Dict[str, Any]:
+    """
+    Add annotation comparison to existing model analysis results.
+
+    This is a convenience function that adds annotation comparison to an existing
+    results dictionary (e.g., from model evaluation or analysis).
+
+    Args:
+        results: Existing results dictionary with model outputs
+        annotations: Array [T] with behavioral annotation indices
+        behavior_names: Optional list of behavior names
+        state_key: Key containing discrete states (default: 'z_discrete')
+        verbose: If True, print summary
+
+    Returns:
+        Updated results dictionary with 'annotation_comparison' key added
+    """
+    # Try different possible locations for result_dict
+    result_dict = None
+    if 'result_dict' in results:
+        result_dict = results['result_dict']
+    elif state_key in results:
+        result_dict = results
+    else:
+        # Search for nested result_dict
+        for key, value in results.items():
+            if isinstance(value, dict) and state_key in value:
+                result_dict = value
+                break
+
+    if result_dict is None:
+        if verbose:
+            print(f"Warning: Could not find '{state_key}' in results. Skipping annotation comparison.")
+        return results
+
+    # Run annotation comparison
+    annotation_results = analyze_state_annotation_correspondence(
+        result_dict=result_dict,
+        annotations=annotations,
+        behavior_names=behavior_names,
+        state_key=state_key,
+        verbose=verbose
+    )
+
+    if annotation_results is not None:
+        # Add to results
+        results_copy = results.copy()
+        results_copy['annotation_comparison'] = annotation_results
+        return results_copy
+    else:
+        return results

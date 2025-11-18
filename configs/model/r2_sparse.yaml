@@ -7,42 +7,50 @@ hyper_hid_dim: 32
 
 ##### Architecture options #####
 loss_type: MSE
-nonlin_decoder: false
+nonlin_decoder: false  # Nonlinear decoder forces R to learn meaningful features
 
 ##### Learning rates (for inference) #####
-lr_r: 5e-3
-lr_r2: 5e-3
-
-lr_weights_inf: 0.005
+lr_r: 0.01
+lr_r2: 0.01
 temp_weight: 2.0
-spat_weight: 0.5
 
 ##### Regularization #####
 lmda_r: 0.0
 lmda_r2: 0.0
 weight_decay: 0.00001
-L1_alpha: ${resolve_default:0.0,${L1_alpha}}
-L1_inf_w: 0.0
-L1_inf_r2: 0.0
-L1_inf_r: 0.0
-L1_alpha_inf: ${resolve_default:0.0,${L1_alpha_inf}}
-L1_alpha_r2: 0.0
-grad_alpha_inf: 1.0
 clip_grad: 10.0
-grad_norm_inf: false
+
+# L1 Inference Penalties
+L1_inf_w: 0.0
+L1_inf_r2: 0.01
+L1_inf_r: 0.01
 
 # Sparse selector configuration
 # Weak temporal smoothness allows r2 to switch between discrete modes
 # Strong sparsity encourages low-dimensional, discrete-like representations
-r2_temporal_smoothness_inf: 0.01    # Weak smoothness (allow switches)
-r2_temporal_smoothness_train: 0.0   # No smoothness during training
-r2_continuity_weight: 0.0           # No cross-window continuity
-sparsity_r2_l1: 0.1                 # Strong L1 sparsity penalty
-sparsity_r2_adaptive: 0.05          # Adaptive sparsity to maintain high sparsity
-target_sparsity_r2: 0.90            # Target 90% zeros
+##### R #####
+sparsity_r_l1: 0.2
+sparsity_r_adaptive: 0.0           # Adaptive sparsity for R
+target_sparsity_r: 0.8              # Target 80% zeros in R for interpretability
+sparsity_r_hoyer: 0.0
+##### R2 #####
+sparsity_r2_l1: 0.2               # Strong L1 sparsity penalty
+sparsity_r2_adaptive: 0.00          # Adaptive sparsity to maintain high sparsity
+target_sparsity_r2: 0.80            # Target 80% zeros
+sparsity_r2_hoyer: 0.0
+##### Weights #####
+sparsity_w_l1: 0.2
+w_min_active_ratio: 0.25            # Keep 25% of components active
+sparsity_w_adaptive: 0.0
+sparsity_w_selective: 0.0           # Selective sparsity (keep only k active components)
+w_target_active: null               # Target number of active components for selective sparsity (int or null)
 sparsity_temperature: 2.0           # Temperature for adaptive sparsity
 sparsity_w_safe: 0.02               # Keep safe hypernetwork regularization
-w_min_active_ratio: 0.25            # Keep 25% of components active
+
+##### Temporal smoothness #####
+r2_temporal_smoothness_inf: 0.00    # Weak smoothness (allow switches)
+r2_temporal_smoothness_train: 0.0   # No smoothness during training
+r2_continuity_weight: 0.0           # No cross-window continuity
 
 ##### Saturation parameters #####
 saturate_r_method: 'scaled_tanh'    # Saturation method for r: 'none', 'sigmoid', 'tanh', 'scaled_tanh'
@@ -50,12 +58,16 @@ saturate_r2_method: 'none'          # Saturation method for r2: 'none', 'sigmoid
 saturate_r_scale: 5.0               # Scale for scaled_tanh saturation of r
 saturate_r2_scale: 3.0              # Scale for scaled_tanh saturation of r2
 
+##### Interpretability regularization #####
+# Encourage independent, interpretable R dimensions
+lambda_decoder_ortho: 0.0          # Decoder orthogonality (promotes independent dimensions via decoder structure)
+lambda_r_correlation: 0.0          # R correlation penalty (penalizes correlated dimensions)
+
 ##### Training params #####
-max_iter: 1000
+max_iter: 250
 tol: 0.01
 normalize_spatial: false
 normalize_temporal: false
-learning_rate_gamma: 0.5
 cos_eta: 5.0
 
 ##### Display #####

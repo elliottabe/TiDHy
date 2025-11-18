@@ -36,6 +36,7 @@ import wandb
 from flax import nnx
 from natsort import natsorted
 from omegaconf import DictConfig, OmegaConf
+from tqdm import tqdm
 
 # Local imports
 from TiDHy.datasets.load_data import load_data, stack_data
@@ -46,6 +47,8 @@ from TiDHy.models.TiDHy_nnx_vmap_training import (
     load_checkpoint,
     create_multi_lr_optimizer,
     create_optimizer,
+    get_latest_checkpoint_epoch,
+    load_model,
 )
 from TiDHy.utils.path_utils import convert_dict_to_path, convert_dict_to_string
 import TiDHy.utils.io_dict_to_hdf5 as ioh5
@@ -161,7 +164,7 @@ def discover_checkpoint(cfg: DictConfig, run_id: str) -> Optional[Path]:
     return restore_checkpoint
 
 
-def prepare_data(cfg: DictConfig) -> Tuple[jax.Array, jax.Array, int]:
+def prepare_data(cfg: DictConfig) -> Tuple[jax.Array, jax.Array, int, Dict]:
     """
     Load and prepare training/validation data.
 
@@ -169,7 +172,7 @@ def prepare_data(cfg: DictConfig) -> Tuple[jax.Array, jax.Array, int]:
         cfg: Configuration object
 
     Returns:
-        Tuple of (train_inputs, val_inputs, input_dim)
+        Tuple of (train_inputs, val_inputs, input_dim, data_dict)
     """
     # Load dataset
     data_dict = load_data(cfg)
@@ -197,7 +200,7 @@ def prepare_data(cfg: DictConfig) -> Tuple[jax.Array, jax.Array, int]:
         f"Data prepared - train shape: {train_inputs.shape}, val shape: {val_inputs.shape}"
     )
 
-    return train_inputs, val_inputs, input_dim
+    return train_inputs, val_inputs, input_dim, data_dict
 
 
 def create_optimizer_from_config(cfg: DictConfig, model: TiDHy) -> nnx.Optimizer:
@@ -270,7 +273,7 @@ def main(cfg: DictConfig) -> None:
 
     # ===== 3. Load and Prepare Data =====
     logging.info("Loading and preparing data...")
-    train_inputs, val_inputs, input_dim = prepare_data(cfg)
+    train_inputs, val_inputs, input_dim, data_dict = prepare_data(cfg)
     cfg.model.input_dim = input_dim
 
     # Use context manager to run all computations on selected device
@@ -349,31 +352,68 @@ def main(cfg: DictConfig) -> None:
             log_sparsity_every=getattr(cfg.train, "log_sparsity_every", 5),
         )
         ioh5.save(str(cfg.paths.log_dir / "training_history.h5"), history)
-        # ===== 8. Final Evaluation =====
-        logging.info("Running final evaluation...")
-        spatial_loss_rhat, spatial_loss_rbar, temp_loss, _ = evaluate_record(
-            trained_model,
-            val_inputs,
-            model.rngs(),
-        )
 
-        final_val_loss = spatial_loss_rhat + spatial_loss_rbar + temp_loss
-        logging.info(f"Final validation loss: {final_val_loss:.4f}")
+        # ===== 8. Final Evaluation with Multiple Sequence Lengths =====
+        logging.info("Running final evaluation on multiple sequence lengths...")
 
-        # Log final metrics
-        if use_wandb:
-            wandb.log(
-                {
-                    "final/val_spatial_loss_rhat": float(spatial_loss_rhat),
-                    "final/val_spatial_loss_rbar": float(spatial_loss_rbar),
-                    "final/val_temp_loss": float(temp_loss),
-                    "final/val_total_loss": float(final_val_loss),
-                }
+        # Load best checkpoint
+        epoch = get_latest_checkpoint_epoch(str(cfg.paths.ckpt_dir))
+        if epoch is not None:
+            logging.info(f"Loading best checkpoint from epoch {epoch:04d}")
+            loaded_model = load_model(model, str(cfg.paths.ckpt_dir / f'epoch_{epoch:04d}'))
+        else:
+            logging.warning("No checkpoint found, using final trained model")
+            loaded_model = trained_model
+
+        # Get maximum sequence length from test data
+        max_seq_len = data_dict['inputs_test'].shape[0]
+
+        # Define sequence lengths to evaluate
+        seq_len = [100, 200, 500, 1000, 2000, max_seq_len]
+        # Filter out sequence lengths longer than available data
+        seq_len = [s for s in seq_len if s <= max_seq_len]
+
+        logging.info(f"Evaluating on sequence lengths: {seq_len}")
+
+        result_dict = {}
+        for seq in tqdm(seq_len, desc="Evaluating sequence lengths"):
+            inputs_test = stack_data(
+                data_dict['inputs_test'],
+                sequence_length=seq,
+                all_sequence_lengths=seq_len
+            )
+            rng_key = model.rngs()
+            spatial_loss_rhat_avg, spatial_loss_rbar_avg, temp_loss_avg, result_dict_single = evaluate_record(
+                loaded_model,
+                inputs_test,
+                rng_key
             )
 
-            # ===== 9. Cleanup =====
+            result_dict[f'{seq}'] = result_dict_single
+
+            # Log metrics for this sequence length
+            total_loss = spatial_loss_rhat_avg + spatial_loss_rbar_avg + temp_loss_avg
+            logging.info(f"Seq length {seq}: total_loss={total_loss:.4f}, "
+                        f"spatial_rhat={spatial_loss_rhat_avg:.4f}, "
+                        f"spatial_rbar={spatial_loss_rbar_avg:.4f}, "
+                        f"temp={temp_loss_avg:.4f}")
+
+            if use_wandb:
+                wandb.log({
+                    f"final/seq_{seq}/spatial_loss_rhat": float(spatial_loss_rhat_avg),
+                    f"final/seq_{seq}/spatial_loss_rbar": float(spatial_loss_rbar_avg),
+                    f"final/seq_{seq}/temp_loss": float(temp_loss_avg),
+                    f"final/seq_{seq}/total_loss": float(total_loss),
+                })
+
+        # Save results for all sequence lengths
+        logging.info("Saving evaluation results...")
+        ioh5.save(str(cfg.paths.log_dir / "evaluation_results.h5"), result_dict)
+
+        # ===== 9. Cleanup =====
+        if use_wandb:
             wandb.finish()
-        logging.info("Training completed successfully!")
+        logging.info("Training and evaluation completed successfully!")
 
 
 if __name__ == "__main__":
