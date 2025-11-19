@@ -39,33 +39,6 @@ dataset:
     normalize: true
     seed: 42
 
-# model:
-#   # Override specific parameters for Rossler dataset
-#   grad_norm_inf: false
-#   grad_alpha_inf: 1.0
-#   cos_eta: 5.0
-#   # Regularization parameters
-#   L1_alpha: ${resolve_default:0.0,${L1_alpha}}
-#   L1_alpha_inf: ${resolve_default:0.0,${L1_alpha_inf}}
-#   L1_alpha_r2: 0.0
-#   L1_inf_r2: 0.0
-#   L1_inf_w: 0.0
-#   L1_inf_r: 0.0
-#   lmda_r: 0.0
-#   lmda_r2: 0.0
-#   # Combined sparsity regularization settings
-#   sparsity_r_l1: 0.01          # Mild L1 for r
-#   sparsity_r2_adaptive: 0.0     # DISABLED - was causing exponential loss growth when model overshoots target sparsity
-#   sparsity_r2_l1: 0.005         # Static L1 regularization for r2 (safer than adaptive)
-#   sparsity_w_safe: 0.008        # SAFE hypernetwork sparsity
-#   target_sparsity_r2: 0.85
-#   sparsity_temperature: 1.5     # Temperature for adaptive sparsity (reduced from 1.5 to prevent loss spikes)
-#   w_min_active_ratio: 1.0
-#   weight_decay: 0.0001
-#   # Training continuity (cross-window overlap)
-#   r2_continuity_weight: 0.05    # Enforce r2 continuity in overlapping regions during training (reduced from 0.2 to prevent conflicts with sparsity)
-
-
 train:
   wandb_project: "TiDHy_eabe"
   device_id: null  # null = use all GPUs, int = specific GPU ID

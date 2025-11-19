@@ -262,7 +262,15 @@ def replace_paths_with_template(cfg, paths_template="workstation", config_dir=".
     experiment_name = cfg.get('dataset', {}).get('name', 'unknown_experiment')
     version = cfg.get('version', 'debug')
     run_id = cfg.get('run_id', 'Testing')
-    
+
+    # Extract override components from existing paths before replacement
+    original_paths = cfg.get('paths', {})
+    override_components = None
+    if original_paths:
+        override_components = extract_override_components(original_paths, run_id, verbose=verbose)
+        if verbose and override_components:
+            print(f"   Detected Hydra override components: {override_components}")
+
     # Create a temporary config for path resolution
     temp_cfg = OmegaConf.create({
         'paths': paths_template_cfg,
@@ -270,14 +278,13 @@ def replace_paths_with_template(cfg, paths_template="workstation", config_dir=".
         'version': version,
         'run_id': run_id
     })
-    
+
     # Resolve all interpolations in the paths
     try:
         OmegaConf.resolve(temp_cfg.paths)
         resolved_template_paths = temp_cfg.paths
-        
+
         # Get original paths (resolve them too if possible)
-        original_paths = cfg.get('paths', {})
         if original_paths:
             try:
                 # Try to resolve original paths as well
@@ -291,16 +298,27 @@ def replace_paths_with_template(cfg, paths_template="workstation", config_dir=".
                 resolved_original_paths = temp_orig.paths
             except:
                 resolved_original_paths = original_paths
-                
+
             # Use smart path replacement
             updated_paths = smart_path_replacement(
-                resolved_original_paths, 
+                resolved_original_paths,
                 resolved_template_paths,
                 verbose=verbose
             )
+
+            # If we have override components, inject them back into the updated paths
+            if override_components:
+                updated_paths = inject_override_components(updated_paths, override_components, run_id, verbose=verbose)
+
             cfg.paths = OmegaConf.create(updated_paths)
         else:
-            cfg.paths = resolved_template_paths
+            # If we have override components, inject them into the template paths
+            if override_components:
+                paths_dict = OmegaConf.to_container(resolved_template_paths, resolve=True)
+                paths_dict = inject_override_components(paths_dict, override_components, run_id, verbose=verbose)
+                cfg.paths = OmegaConf.create(paths_dict)
+            else:
+                cfg.paths = resolved_template_paths
         
         if verbose:
             print(f"✅ Successfully applied template '{paths_template}':")
@@ -430,6 +448,130 @@ def create_fresh_config_with_paths(dataset, paths_template="workstation", versio
     return cfg
 
 
+def extract_override_components(original_paths, run_id, verbose=False):
+    """
+    Extract Hydra override components from existing paths.
+
+    Hydra appends override parameters as subdirectories between the run_id directory
+    and final subdirectories (logs/, ckpt/, etc.). This function extracts those
+    override components so they can be preserved when switching path templates.
+
+    Args:
+        original_paths: Dict of original paths from loaded config
+        run_id: The run ID to use as a reference point
+        verbose: Whether to print debug information
+
+    Returns:
+        String containing the override components (e.g., "load_jobid=,note=hyak_ckpt,seed=42")
+        or None if no override components are found
+
+    Example:
+        Input path: /data/.../run_id=31106927/load_jobid=,note=hyak_ckpt,seed=42/logs/
+        Output: "load_jobid=,note=hyak_ckpt,seed=42"
+    """
+    # Get a reference path that should contain overrides (prefer log_dir or save_dir)
+    reference_path = None
+    for key in ['log_dir', 'save_dir', 'ckpt_dir', 'fig_dir']:
+        if key in original_paths:
+            reference_path = original_paths[key]
+            break
+
+    if not reference_path:
+        if verbose:
+            print("   No reference path found for override extraction")
+        return None
+
+    # Convert to Path object
+    path = Path(str(reference_path))
+
+    # Find the run_id component in the path
+    run_id_component = f"run_id={run_id}"
+    parts = list(path.parts)
+
+    # Search for run_id in path parts
+    run_id_idx = None
+    for i, part in enumerate(parts):
+        if part == run_id_component or part.startswith("run_id="):
+            run_id_idx = i
+            break
+
+    if run_id_idx is None:
+        if verbose:
+            print(f"   Could not find run_id component '{run_id_component}' in path: {path}")
+        return None
+
+    # Extract components after run_id and before known subdirectories
+    known_subdirs = {'logs', 'ckpt', 'figures', 'fig', 'tb', 'tensorboard'}
+    override_components = []
+
+    for i in range(run_id_idx + 1, len(parts)):
+        if parts[i] in known_subdirs:
+            # Stop when we hit a known subdirectory
+            break
+        override_components.append(parts[i])
+
+    if override_components:
+        override_str = '/'.join(override_components)
+        if verbose:
+            print(f"   Extracted override components: {override_str}")
+        return override_str
+
+    if verbose:
+        print("   No override components found")
+    return None
+
+
+def inject_override_components(paths_dict, override_components, run_id, verbose=False):
+    """
+    Inject override components back into resolved paths.
+
+    After switching path templates, the override components (Hydra parameter overrides)
+    need to be re-injected into the paths to maintain the correct directory structure.
+
+    Args:
+        paths_dict: Dict of resolved paths from new template
+        override_components: String of override components to inject (e.g., "seed=42,note=test")
+        run_id: The run ID to use as insertion point
+        verbose: Whether to print debug information
+
+    Returns:
+        Dict with updated paths containing override components
+
+    Example:
+        Input: /data/.../run_id=31106927/logs/
+        Override: "load_jobid=,note=hyak_ckpt,seed=42"
+        Output: /data/.../run_id=31106927/load_jobid=,note=hyak_ckpt,seed=42/logs/
+    """
+    updated_paths = {}
+    run_id_pattern = f"run_id={run_id}"
+
+    for key, path_value in paths_dict.items():
+        # Skip non-path values (like 'user')
+        if key == 'user':
+            updated_paths[key] = path_value
+            continue
+
+        path_str = str(path_value)
+
+        # Check if this path contains the run_id pattern
+        if run_id_pattern in path_str:
+            # Split the path at run_id to inject override components
+            parts = path_str.split(run_id_pattern)
+            if len(parts) == 2:
+                prefix, suffix = parts
+                # Inject override components between run_id and the rest of the path
+                updated_path = f"{prefix}{run_id_pattern}/{override_components}{suffix}"
+                updated_paths[key] = updated_path
+                if verbose:
+                    print(f"   Injected overrides into {key}: {path_str} -> {updated_path}")
+                continue
+
+        # If no run_id found or injection not needed, keep as-is
+        updated_paths[key] = path_str
+
+    return updated_paths
+
+
 def override_config_paths(cfg, new_paths_template, config_dir="configs", verbose=True):
     """
     Override the paths in an existing config with a new paths template.
@@ -485,6 +627,14 @@ def override_config_paths(cfg, new_paths_template, config_dir="configs", verbose
     version = cfg.get('version', 'debug')
     run_id = cfg.get('run_id', 'Testing')
 
+    # Extract override components from existing paths before replacement
+    original_paths = cfg.get('paths', {})
+    override_components = None
+    if original_paths:
+        override_components = extract_override_components(original_paths, run_id, verbose=verbose)
+        if verbose and override_components:
+            print(f"   Detected Hydra override components: {override_components}")
+
     # Create a temporary config for path resolution with the new template
     temp_cfg = OmegaConf.create({
         'paths': new_paths_template_cfg,
@@ -497,6 +647,13 @@ def override_config_paths(cfg, new_paths_template, config_dir="configs", verbose
     try:
         OmegaConf.resolve(temp_cfg.paths)
         resolved_new_paths = temp_cfg.paths
+
+        # If we have override components, inject them back into the new paths
+        if override_components:
+            # Convert to dict for injection
+            paths_dict = OmegaConf.to_container(resolved_new_paths, resolve=True)
+            paths_dict = inject_override_components(paths_dict, override_components, run_id, verbose=verbose)
+            resolved_new_paths = OmegaConf.create(paths_dict)
 
         # Replace the paths in the original config
         cfg.paths = resolved_new_paths

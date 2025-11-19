@@ -32,6 +32,8 @@ hydra:
             - paths
             - version
             - dataset
+            - note
+            - load_jobid
             - run_id
             - model
             - train.device_id

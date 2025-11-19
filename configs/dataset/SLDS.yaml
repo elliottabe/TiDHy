@@ -15,7 +15,7 @@ dataset:
     full_sup: false
     overlap: 2
     normalize: true
-    seed: 10
+    seed: 42
     time_bins_train: 200000
     time_bins_test: 50000
     z_timescale: [.975,.975,.975]
