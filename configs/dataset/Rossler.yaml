@@ -31,7 +31,7 @@ dataset:
     # Observation parameters
     # State ordering: [xs, ys, zs, xf, yf, zf] = [0, 1, 2, 3, 4, 5]
     # Default: observe [xf, yf, zs] = [3, 4, 2] (fast x,y + slow z)
-    observed_states: [0,1,2,3,4,5]
+    observed_states: [2,3,4]
     rand_proj: true  # Use random projection for observations
     rand_proj_dim: 16  # Dim of random projection if used
     # Data processing

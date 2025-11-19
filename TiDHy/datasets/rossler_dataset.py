@@ -83,8 +83,8 @@ def integrate_hierarchical_rossler(time_bins, dt, initial_state, params, transie
         ),
         t_eval=t_eval,
         method='LSODA',
-        rtol=1e-6,   # Relaxed from 1e-9
-        atol=1e-9,   # Relaxed from 1e-12
+        rtol=1e-6,
+        atol=1e-9,
         max_step=dt * 10  # Prevent extremely small steps
     )
 
