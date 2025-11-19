@@ -1,7 +1,7 @@
 # set default task and default training config based on dataset
 defaults:
   - dataset: SLDS
-  - model: sparsity
+  - model: r2_sparse
   - paths: workstation
   - _self_
   - optional experiment: null  # Optional experiment configs (override everything)

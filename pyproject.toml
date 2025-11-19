@@ -44,6 +44,8 @@ dependencies = [
 
     # Configuration management
     "hydra-core>=1.3.0",
+    "hydra-list-sweeper",
+    "hydra-joblib-launcher",
     "omegaconf>=2.3.0",
 
     # Experiment tracking

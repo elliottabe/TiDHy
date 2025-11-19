@@ -22,8 +22,8 @@ clip_grad: 10.0
 
 # L1 Inference Penalties
 L1_inf_w: 0.0
-L1_inf_r2: 0.01
-L1_inf_r: 0.01
+L1_inf_r2: 0.05
+L1_inf_r: 0.00
 
 # Sparse selector configuration
 # Weak temporal smoothness allows r2 to switch between discrete modes
