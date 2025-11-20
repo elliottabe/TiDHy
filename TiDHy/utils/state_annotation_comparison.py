@@ -337,6 +337,8 @@ def plot_confusion_matrix(
     normalize: str = 'true',
     figsize: Tuple[int, int] = (10, 8),
     cmap: str = 'Blues',
+    fontsize: int = 13,
+    model: str = 'TiDHy',
     ax: Optional[plt.Axes] = None
 ) -> plt.Figure:
     """
@@ -396,14 +398,16 @@ def plot_confusion_matrix(
         ax=ax,
         xticklabels=behavior_names if behavior_names else 'auto',
         yticklabels=behavior_names if behavior_names else 'auto',
-        cbar_kws={'label': 'Fraction' if normalize else 'Count'}
+        vmin=0,
+        vmax=1 if normalize else None,
+        cbar_kws={'label': 'fraction' if normalize else 'count'}
     )
+    
+    ax.set_xlabel('predicted state', fontsize=fontsize-2)
+    ax.set_ylabel('true annotation', fontsize=fontsize-2)
+    ax.set_title(f'{model} confusion matrix', fontsize=fontsize)
 
-    ax.set_xlabel('Predicted State (matched to annotation)', fontsize=12)
-    ax.set_ylabel('True Annotation', fontsize=12)
-    ax.set_title('State-Annotation Confusion Matrix', fontsize=14)
-
-    plt.tight_layout()
+    # plt.tight_layout()
 
     return fig
 

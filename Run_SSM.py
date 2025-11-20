@@ -24,7 +24,7 @@ from TiDHy.utils.path_utils import convert_dict_to_path, convert_dict_to_string
 def fit_SLDS(cfg, data_dict):
 
     print("Fitting SLDS with Laplace-EM")
-
+    np.random.seed(cfg.seed)
     # Handle multiple sequences by concatenating if needed
     inputs_train_SLDS = np.asarray(data_dict["inputs_train"])
     inputs_test_SLDS = np.asarray(data_dict["inputs_test"])

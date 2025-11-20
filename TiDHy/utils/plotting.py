@@ -18,11 +18,14 @@ mpl.rcParams.update({'font.size':          10,
                      'axes.spines.right':  False,
                      'axes.spines.top':    False,
                      'pdf.fonttype':       42,
+                     'ps.fonttype':        42,
                      'xtick.labelsize':    10,
                      'ytick.labelsize':    10,
                      'figure.facecolor':   'white',
-                     'pdf.use14corefonts': True,
-                     'font.family':        'Arial',
+                     'pdf.use14corefonts': False,  # Changed to False - we're embedding TrueType fonts
+                     'font.family':        'sans-serif',
+                     'font.sans-serif':    'Arial',
+                     'axes.unicode_minus': True,  # Ensures proper minus sign rendering in PDFs
                     })
 
 
