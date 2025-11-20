@@ -1,4 +1,4 @@
-name: TiDHy
+name: tidhy
 channels:
   - rapidsai
   - conda-forge

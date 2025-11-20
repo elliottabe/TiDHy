@@ -21,7 +21,7 @@ This script will:
 
 **Activate the environment:**
 ```bash
-conda activate TiDHy
+conda activate tidhy
 ```
 
 ### SSM Baseline Environment (Optional)
@@ -50,7 +50,7 @@ If you prefer manual setup:
 
 2. **Activate environment:**
    ```bash
-   conda activate TiDHy  # or 'ssm'
+   conda activate tidhy  # or 'ssm'
    ```
 
 3. **Install Python packages with UV:**
