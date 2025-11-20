@@ -25,7 +25,7 @@ hydra:
     # Paired parameters - these are zipped together
     # This creates 2 combinations: (0.01, 0) and (0.1, 1)
     list_params:
-      model.L1_inf_r2: 0.01, 0.02, 0.05, 0.075
+      seed: 42, 43, 44, 45
       train.device_id: 0, 1, 2, 3
 
     # Grid parameters - cartesian product with paired params
