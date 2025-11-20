@@ -97,20 +97,9 @@ python Run_TiDHy_NNX_vmap.py dataset=SLDS model=sparsity
 
 Available datasets: `SLDS`, `SSM`, `Rossler`, `AnymalTerrain`, `CalMS21`
 
-Available model configs: `default_model`, `sparsity`, `r2_sparse`, `r2_smooth`, `r2_hybrid`, `lstm`
+Available model configs: `default_model`, `sparsity`, `r2_sparse`, 
 
 ### Running Baseline Models
-
-**LSTM baseline:**
-```bash
-python Run_LSTM.py dataset=SLDS
-```
-
-**ARHMM baseline (requires ssm environment):**
-```bash
-conda activate ssm
-python Run_ARHMM.py dataset=SLDS
-```
 
 **SSM baseline (requires ssm environment):**
 ```bash
