@@ -11,14 +11,14 @@ dataset:
     transient_steps: 1000
 
     # Slow Rossler system parameters (slower dynamics)
-    a_slow: 0.2
-    b_slow: 0.2
-    c_slow: 3.0  # Lower c value for slower oscillations
+    a_slow: 0.1
+    b_slow: 0.1
+    c_slow: 1.0  # Lower c value for slower oscillations
 
     # Fast Rossler system base parameters (faster dynamics)
     a_fast: 0.2
     b_base: 0.2
-    c_base: 5.7  # Standard Rossler c for chaotic behavior
+    c_base: 100.0  # Standard Rossler c for chaotic behavior
 
     # Coupling parameters (how strongly slow modulates fast)
     # Note: Modulated parameters are clipped to stable ranges:
@@ -37,7 +37,7 @@ dataset:
     # Data processing
     noise_level: 0.1  # Observation noise std dev (0 = no noise)
     normalize: true
-    seed: 42
+    seed: 45
 
 train:
   wandb_project: "TiDHy_eabe"
